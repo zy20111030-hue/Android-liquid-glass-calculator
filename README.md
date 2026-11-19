@@ -1,4 +1,3 @@
-
 # 简易计算器 (Compose 版 · 液态玻璃)
 
 用 Kotlin + Compose Multiplatform 重写，接入 [Kyant0/AndroidLiquidGlass](https://github.com/Kyant0/AndroidLiquidGlass)（`io.github.kyant0:backdrop`）实现液态玻璃按键。
@@ -26,11 +25,10 @@
 
 ## 文件说明
 
-- `calculator-v2.0-release-*.apk` —— **已签名 release APK**（V2 签名）
+- `calculator-v2.0-release-*.apk` —— release APK
 - `app/src/main/kotlin/com/dshm/calc/MainActivity.kt` —— 全部 UI + 逻辑
 - `app/src/main/AndroidManifest.xml` —— 清单（含 MANAGE_EXTERNAL_STORAGE）
 - `app/src/main/res/` —— 图标 + 默认壁纸
-- `app/calc.keystore` —— 签名密钥（别名 `calc`）
 - `app/build.gradle.kts`、`settings.gradle.kts`、`gradle/libs.versions.toml` —— Gradle 工程
 
 
@@ -38,6 +36,6 @@
 依赖：Android SDK（`platforms/android-37.0`）、已修复的 JDK `cacerts`、arm64 `aapt2`。
 
 ```sh
-gradle :app:assembleRelease   # 已签名 release
+gradle :app:assembleRelease   # release 构建
 gradle :app:assembleDebug     # debug 调试
 ```
