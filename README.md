@@ -52,25 +52,6 @@ app/src/main/AndroidManifest.xml
 settings.gradle.kts / gradle/libs.versions.toml     # 依赖与版本
 ```
 
-## 开发工作流
-
-```sh
-# 构建
-gradle :app:assembleDebug     # 调试
-gradle :app:assembleRelease   # 发布（未配置签名时为未签名 APK）
-
-# 提交与同步
-git add -A
-git commit -m "说明"
-git push
-```
-
-**签名**：release 签名从 `local.properties` 读取，字段为
-`signing.storeFile` / `signing.storePassword` / `signing.keyAlias` / `signing.keyPassword`。
-未配置时 `assembleRelease` 产出未签名 APK。
-
-**注意**：`local.properties`、`*.keystore`、`*.jks` 等含本机路径或密钥的文件已在 `.gitignore` 中排除，请勿提交；访问凭据请通过各自的 Git 客户端配置，不要写入仓库。
-
 ## 许可
 
 [MIT](LICENSE)
