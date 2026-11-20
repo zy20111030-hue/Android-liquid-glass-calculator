@@ -27,3 +27,6 @@ build.log
 # 开发时的零散测试文件
 NetTest.java
 NetTest.class
+
+# 本机发布备忘（含凭证说明，切勿提交）
+DEV_NOTES.md

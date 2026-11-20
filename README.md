@@ -52,26 +52,24 @@ app/src/main/AndroidManifest.xml
 settings.gradle.kts / gradle/libs.versions.toml     # 依赖与版本
 ```
 
-## 版本管理与发布
-
-源码直接用 Git 管理，发布通过 `git push` 同步到 GitHub，不再打包 zip 上传。
+## 开发工作流
 
 ```sh
-cd glass
+# 构建
+gradle :app:assembleDebug     # 调试
+gradle :app:assembleRelease   # 发布（未配置签名时为未签名 APK）
+
+# 提交与同步
 git add -A
 git commit -m "说明"
 git push
 ```
 
-- 远端：`https://github.com/zy20111030-hue/Android-liquid-glass-calculator`
-- 远端地址已内嵌访问令牌（PAT，有效期 90 天，约 2027-02 到期）。到期后重新生成并执行：
+**签名**：release 签名从 `local.properties` 读取，字段为
+`signing.storeFile` / `signing.storePassword` / `signing.keyAlias` / `signing.keyPassword`。
+未配置时 `assembleRelease` 产出未签名 APK。
 
-```sh
-git remote set-url origin "https://<用户名>:<新token>@github.com/zy20111030-hue/Android-liquid-glass-calculator.git"
-```
-
-- **切勿**提交 `local.properties`、`*.keystore`、token 或签名密码（均已在 `.gitignore` 中排除）。
-- release 签名从 `local.properties` 读取（`signing.storeFile` / `signing.storePassword` / `signing.keyAlias` / `signing.keyPassword`）；未配置时 `assembleRelease` 产出未签名 APK。
+**注意**：`local.properties`、`*.keystore`、`*.jks` 等含本机路径或密钥的文件已在 `.gitignore` 中排除，请勿提交；访问凭据请通过各自的 Git 客户端配置，不要写入仓库。
 
 ## 许可
 
