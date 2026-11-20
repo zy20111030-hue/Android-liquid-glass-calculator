@@ -38,6 +38,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -58,6 +59,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -82,9 +84,11 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextMeasurer
@@ -242,7 +246,7 @@ private fun featureIntroFor(lang: Lang): FeatureIntro = when (lang) {
     Lang.ZH_CN -> FeatureIntro(
         "功能介绍",
         listOf(
-            "· 液态玻璃按键，按压有折射与弹跳动画",
+            "· 按住玻璃按键，触点一侧下压，旁边的键缘映出微光",
             "· 长按 ÷ 输入分数：先输分母再输分子，最多两层嵌套",
             "· 长按 AC 插入括号，用括号改变运算优先级",
             "· 算式按运算优先级精确计算，分数不丢精度",
@@ -254,7 +258,7 @@ private fun featureIntroFor(lang: Lang): FeatureIntro = when (lang) {
     Lang.ZH_TW -> FeatureIntro(
         "功能介紹",
         listOf(
-            "· 液態玻璃按鍵，按壓有折射與彈跳動畫",
+            "· 按住玻璃按鍵，觸點一側下壓，旁邊的鍵緣映出微光",
             "· 長按 ÷ 輸入分數：先輸分母再輸分子，最多兩層巢狀",
             "· 長按 AC 插入括號，用括號改變運算優先級",
             "· 算式按運算優先級精確計算，分數不丟精度",
@@ -266,7 +270,7 @@ private fun featureIntroFor(lang: Lang): FeatureIntro = when (lang) {
     Lang.EN -> FeatureIntro(
         "Features",
         listOf(
-            "· Liquid-glass keys with refraction and press bounce",
+            "· Glass keys dip under your finger and light the edges of nearby keys",
             "· Long-press ÷ to enter a fraction (denominator first, up to 2 levels)",
             "· Long-press AC to insert parentheses for precedence control",
             "· Expressions are evaluated exactly with operator precedence, no precision loss",
@@ -1142,14 +1146,15 @@ fun CalculatorApp() {
         }
     }
 
-    CompositionLocalProvider(LocalVibrationLevel provides vibrationLevel) {
+    val keypadLights = remember { KeypadLights() }
+    CompositionLocalProvider(LocalVibrationLevel provides vibrationLevel, LocalKeypadLights provides keypadLights) {
     Box(
         Modifier.fillMaxSize().graphicsLayer {
             scaleX = mainEnter.value
             scaleY = mainEnter.value
             alpha = mainEnter.value
             translationY = (1f - mainEnter.value) * 60.dp.toPx()
-        }
+        }.onPlaced { keypadLights.plane = it }
     ) {
         Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
             if (effectiveWallpaper != null) {
@@ -1264,6 +1269,7 @@ fun CalculatorApp() {
                 GlassButton("=", backdrop, Modifier.weight(1f).aspectRatio(0.5f), ::onEquals, ::toggleThemeByLongPress, buttonSurface, fg, strongHaptic = true)
             }
         }
+        Spacer(Modifier.matchParentSize().graphicsLayer().drawNeighborReflections(keypadLights, dark))
     }
 
     if (showMenu) {
@@ -1723,35 +1729,24 @@ fun GlassButton(
     val haptic = LocalHapticFeedback.current
     val vibrationLevel = LocalVibrationLevel.current
     val interactionSource = remember { MutableInteractionSource() }
-    val isPressed by interactionSource.collectIsPressedAsState()
-    val press by animateFloatAsState(
-        targetValue = if (isPressed) 1f else 0f,
-        animationSpec = spring(stiffness = 500f, dampingRatio = 0.7f)
-    )
+    val keypad = LocalKeypadLights.current ?: remember { KeypadLights() }
+    val light = remember(keypad) { KeyLightSource(keypad) }
+    DisposableEffect(light) {
+        keypad.keys.add(light)
+        onDispose {
+            light.finishPress()
+            keypad.keys.remove(light)
+        }
+    }
 
     Box(
         modifier
             .padding(6.dp)
-            .drawBackdrop(
-                backdrop = backdrop,
-                shape = { RoundedCornerShape(16.dp) },
-                effects = {
-                    vibrancy()
-                    blur(2f.dp.toPx())
-                    lens(18f.dp.toPx(), 30f.dp.toPx())
-                },
-                layerBlock = {
-                    val s = 1f + 0.08f * press
-                    scaleX = s
-                    scaleY = s
-                },
-                onDrawSurface = {
-                    drawRect(surfaceColor)
-                }
-            )
+            .trackKeyContact(light)
             .combinedClickable(
                 interactionSource = interactionSource,
                 indication = null,
+                role = Role.Button,
                 onClick = {
                     hapticType(vibrationLevel, strongHaptic)?.let { haptic.performHapticFeedback(it) }
                     onClick()
@@ -1760,6 +1755,7 @@ fun GlassButton(
             ),
         contentAlignment = Alignment.Center
     ) {
+        GlassKeyFace(backdrop, surfaceColor, interactionSource, light)
         BasicText(
             text,
             style = TextStyle(
