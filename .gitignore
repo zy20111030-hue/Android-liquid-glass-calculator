@@ -1,0 +1,29 @@
+# Gradle / 构建产物
+.gradle/
+build/
+app/build/
+.kotlin/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# 本机环境（含签名配置，切勿提交）
+local.properties
+
+# 签名文件（切勿提交）
+*.keystore
+*.jks
+
+# IDE
+.idea/
+*.iml
+.DS_Store
+
+# 编译产物
+*.class
+build.log
+
+# 开发时的零散测试文件
+NetTest.java
+NetTest.class
