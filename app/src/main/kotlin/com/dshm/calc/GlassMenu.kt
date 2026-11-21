@@ -115,6 +115,7 @@ internal fun GlassMenu(
         modifier
             .width(w)
             .height(h)
+            .offset(y = 56.dp * p)
             .blurModifier(morphBlur, edgeTreatment = androidx.compose.ui.draw.BlurredEdgeTreatment.Unbounded)
             .graphicsLayer {
                 val s = 1f - 0.06f * pressAnim.value
