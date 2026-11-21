@@ -45,6 +45,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
@@ -73,6 +74,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.blur as blurModifier
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.graphics.drawOutline
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
@@ -118,12 +123,16 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.drawBackdrop
+import com.kyant.backdrop.effects.blur
+import com.kyant.backdrop.effects.lens
+import com.kyant.backdrop.effects.vibrancy
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
@@ -245,27 +254,33 @@ private val strings = mapOf(
     Lang.ZH_CN to Str(
         "计算器", "设置", "深色模式", "壁纸", "震动", "语言", "关于",
         "跟随系统", "壁纸取色", "无", "关闭", "标准", "增强", "取消",
-        "版本 V3.1", "确定", "更换壁纸需要「允许访问所有文件」权限", "去授权", "恢复默认", "关闭", "错误", "复制",
+        "版本 V4.0-release", "确定", "更换壁纸需要「允许访问所有文件」权限", "去授权", "恢复默认", "关闭", "错误", "复制",
         "历史", "退格", "清除", "插入括号", "加", "减", "乘", "除", "等于",
         "全选", "完成", "选择数字", "回填"
     ),
     Lang.ZH_TW to Str(
         "計算器", "設置", "深色模式", "桌布", "震動", "語言", "關於",
         "跟隨系統", "桌布取色", "無", "關閉", "標準", "增強", "取消",
-        "版本 V3.1", "確定", "更換桌布需要「允許存取所有檔案」權限", "去授權", "恢復預設", "關閉", "錯誤", "複製",
+        "版本 V4.0-release", "確定", "更換桌布需要「允許存取所有檔案」權限", "去授權", "恢復預設", "關閉", "錯誤", "複製",
         "歷史", "退格", "清除", "插入括號", "加", "減", "乘", "除", "等於",
         "全選", "完成", "選取數字", "帶入"
     ),
     Lang.EN to Str(
         "Calculator", "Settings", "Dark mode", "Wallpaper", "Vibration", "Language", "About",
         "Follow system", "Wallpaper color", "None", "Off", "Standard", "Enhanced", "Cancel",
-        "Version V3.1", "OK", "Changing wallpaper requires 'All files access' permission", "Grant", "Restore default", "Close", "Error", "Copy",
+        "Version V4.0-release", "OK", "Changing wallpaper requires 'All files access' permission", "Grant", "Restore default", "Close", "Error", "Copy",
         "History", "Backspace", "Clear", "Insert parentheses", "Plus", "Minus", "Multiply", "Divide", "Equals",
         "Select all", "Done", "Select number", "Use result"
     )
 )
 
 private fun stringsFor(lang: Lang): Str = strings[lang]!!
+
+private fun keyShapeText(lang: Lang, which: String): String = when (lang) {
+    Lang.ZH_CN -> when (which) { "title" -> "按键形状"; "rect" -> "圆角矩形"; else -> "圆形" }
+    Lang.ZH_TW -> when (which) { "title" -> "按鍵形狀"; "rect" -> "圓角矩形"; else -> "圓形" }
+    Lang.EN -> when (which) { "title" -> "Key shape"; "rect" -> "Rounded"; else -> "Circle" }
+}
 
 data class FeatureIntro(val title: String, val lines: List<String>, val continueLabel: String)
 
@@ -922,6 +937,11 @@ fun CalculatorApp() {
     val displayColor = if (lightDisplayText) Color(0xFFF4F6FA) else Color(0xFF181B20)
 
     var showMenu by remember { mutableStateOf(false) }
+    var showKeyShape by remember { mutableStateOf(false) }
+    var keyShape by remember { mutableStateOf(prefs.getString("key_shape", "circle") ?: "circle") }
+    var historyExpanded by remember { mutableStateOf(false) }
+    val islandBlur by androidx.compose.animation.core.animateDpAsState(if (historyExpanded) 10.dp else 0.dp, label = "island-blur")
+    val islandScrim by androidx.compose.animation.core.animateFloatAsState(if (historyExpanded) 0.12f else 0f, label = "island-scrim")
     var showVibration by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var showLanguage by remember { mutableStateOf(false) }
@@ -1093,7 +1113,12 @@ fun CalculatorApp() {
     }
 
     val keypadLights = remember { KeypadLights() }
-    CompositionLocalProvider(LocalVibrationLevel provides vibrationLevel, LocalKeypadLights provides keypadLights) {
+    CompositionLocalProvider(
+        LocalVibrationLevel provides vibrationLevel,
+        LocalKeypadLights provides keypadLights,
+        LocalKeyStyle provides (if (keyShape == "circle") KeyStyle.Circle else KeyStyle.RoundedRect),
+        LocalBackdrop provides backdrop
+    ) {
     Box(
         Modifier.fillMaxSize().graphicsLayer {
             scaleX = mainEnter.value
@@ -1115,7 +1140,18 @@ fun CalculatorApp() {
             }
         }
 
-        Column(Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 16.dp)) {
+        if (selectionDocument != null) {
+            // 选中态下，点空白区域即可退出选择、恢复原样
+            Box(
+                Modifier.matchParentSize().pointerInput(Unit) {
+                    detectTapGestures { selectionDocument = null }
+                }
+            )
+        }
+
+        Column(
+            Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 16.dp)
+        ) {
             Row(
                 Modifier.fillMaxWidth().padding(vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -1125,16 +1161,8 @@ fun CalculatorApp() {
                     style = TextStyle(color = displayColor, fontSize = 19.sp, fontWeight = FontWeight.Medium),
                     maxLines = 1
                 )
-                Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
-                    HistoryButton(history, displayColor, dark, str.history, str.useResult, ::clearHistory, ::useResult)
-                }
-                Box(
-                    Modifier.size(44.dp).clickable(role = Role.Button) { showMenu = true }
-                        .semantics { contentDescription = str.settings },
-                    contentAlignment = Alignment.Center
-                ) {
-                    BasicText("⋮", style = TextStyle(color = displayColor, fontSize = 24.sp))
-                }
+                Box(Modifier.weight(1f))
+                Box(Modifier.size(44.dp))
             }
 
             val fontSp = when {
@@ -1190,6 +1218,13 @@ fun CalculatorApp() {
                 Modifier.fillMaxWidth().weight(1f).padding(end = 10.dp),
                 contentAlignment = Alignment.BottomEnd
             ) {
+                if (selectionDocument != null) {
+                    Box(
+                        Modifier.matchParentSize().pointerInput(Unit) {
+                            detectTapGestures { selectionDocument = null }
+                        }
+                    )
+                }
                 val last = history.firstOrNull()
                 val showExpression = complete && !evaluationFailed && document == null && layout != null &&
                     maxHeight >= with(density) { layout.height.toDp() + 26.sp.toDp() }
@@ -1238,6 +1273,10 @@ fun CalculatorApp() {
                                                 selectValue(tokenAt(layout, offset))
                                             },
                                             onTap = { offset ->
+                                                if (selectionDocument != null) {
+                                                    selectionDocument = null
+                                                    return@detectTapGestures
+                                                }
                                                 val now = SystemClock.uptimeMillis()
                                                 val lastTap = previousTap
                                                 val token = tokenAt(layout, offset)
@@ -1321,37 +1360,107 @@ fun CalculatorApp() {
                 GlassButton("=", backdrop, Modifier.weight(1f).aspectRatio(0.5f), ::onEquals, ::toggleThemeByLongPress, buttonSurface, fg, strongHaptic = true, symbolLabel = str.equalsLabel)
             }
         }
-        Spacer(Modifier.matchParentSize().graphicsLayer().drawNeighborReflections(keypadLights, dark))
-    }
-
-    if (showMenu) {
-        Dialog(onDismissRequest = { showMenu = false }) {
-            DialogPanel {
-                BasicText(str.settings, style = TextStyle(color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold), modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp))
-                DialogItem(str.darkMode) { showMenu = false; showSettings = true }
-                DialogItem(str.wallpaper) { showMenu = false; requestWallpaper() }
-                DialogItem(str.vibration) { showMenu = false; showVibration = true }
-                DialogItem(str.language) { showMenu = false; showLanguage = true }
-                DialogItem(featureIntroFor(lang).title) { showMenu = false; showIntro = true }
-                DialogItem(str.about) { showMenu = false; showAbout = true }
+        if (historyExpanded) {
+            Box(
+                Modifier.fillMaxSize().pointerInput(Unit) {
+                    detectTapGestures { historyExpanded = false }
+                }
+            )
+        }
+        BoxWithConstraints(
+            Modifier.fillMaxSize().safeDrawingPadding(),
+            contentAlignment = Alignment.TopCenter
+        ) {
+            val cw = maxWidth
+            val ch = maxHeight
+            Box(Modifier.padding(top = 8.dp)) {
+                HistoryButton(
+                    history = history,
+                    backdrop = backdrop,
+                    fg = displayColor,
+                    dark = dark,
+                    title = str.history,
+                    useResultLabel = str.useResult,
+                    collapsedMaxWidth = (cw - 200.dp).coerceAtLeast(96.dp),
+                    expandedWidth = cw - 32.dp,
+                    maxPanelHeight = (ch - 170.dp).coerceAtLeast(220.dp),
+                    expanded = historyExpanded,
+                    onToggle = { historyExpanded = !historyExpanded },
+                    onClear = ::clearHistory,
+                    onUseResult = ::useResult
+                )
             }
         }
+
+        key(keyShape) {
+        Box(Modifier.fillMaxSize()) {
+            if (showMenu) {
+                GlassMenuScrim { showMenu = false }
+            }
+            BoxWithConstraints(
+                Modifier.fillMaxSize().safeDrawingPadding(),
+                contentAlignment = Alignment.TopEnd
+            ) {
+                Box(Modifier.padding(top = 8.dp, end = 12.dp)) {
+                    GlassMenu(
+                        visible = showMenu,
+                        backdrop = backdrop,
+                        surfaceColor = if (dark) Color.White.copy(alpha = 0.07f) else Color.White.copy(alpha = 0.16f),
+                        targetWidth = 236.dp,
+                        targetHeight = 520.dp,
+                        onToggle = { showMenu = !showMenu },
+                        itemCount = 7,
+                        itemHeight = 60.dp,
+                        headerHeight = 54.dp,
+                        onSelect = { idx ->
+                            when (idx) {
+                                0 -> { showMenu = false; showSettings = true }
+                                1 -> { showMenu = false; requestWallpaper() }
+                                2 -> { showMenu = false; showVibration = true }
+                                3 -> { showMenu = false; showKeyShape = true }
+                                4 -> { showMenu = false; showLanguage = true }
+                                5 -> { showMenu = false; showIntro = true }
+                                6 -> { showMenu = false; showAbout = true }
+                            }
+                        },
+                        onHoverChange = { hapticType(vibrationLevel, true)?.let { haptic.performHapticFeedback(it) } },
+                    ) {
+                        BasicText(
+                            str.settings,
+                            style = TextStyle(color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold),
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp)
+                        )
+                        DialogItem(str.darkMode, glass = false) { showMenu = false; showSettings = true }
+                        DialogItem(str.wallpaper, glass = false) { showMenu = false; requestWallpaper() }
+                        DialogItem(str.vibration, glass = false) { showMenu = false; showVibration = true }
+                        DialogItem(keyShapeText(lang, "title"), glass = false) { showMenu = false; showKeyShape = true }
+                        DialogItem(str.language, glass = false) { showMenu = false; showLanguage = true }
+                        DialogItem(featureIntroFor(lang).title, glass = false) { showMenu = false; showIntro = true }
+                        DialogItem(str.about, glass = false) { showMenu = false; showAbout = true }
+                    }
+                }
+            }
+        }
+
+            Spacer(Modifier.matchParentSize().graphicsLayer().drawNeighborReflections(keypadLights, dark, keyShape == "circle"))
+        }
     }
+
     if (showVibration) {
         Dialog(onDismissRequest = { showVibration = false }) {
             DialogPanel {
                 BasicText(str.vibration, style = TextStyle(color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold), modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp))
-                DialogItem(str.off + if (vibrationLevel == "off") "  ✓" else "") {
+                DialogItem(str.off, selected = vibrationLevel == "off") {
                     vibrationLevel = "off"
                     prefs.edit().putString("vibration_level", "off").apply()
                     showVibration = false
                 }
-                DialogItem(str.standard + if (vibrationLevel == "standard") "  ✓" else "") {
+                DialogItem(str.standard, selected = vibrationLevel == "standard") {
                     vibrationLevel = "standard"
                     prefs.edit().putString("vibration_level", "standard").apply()
                     showVibration = false
                 }
-                DialogItem(str.enhanced + if (vibrationLevel == "enhanced") "  ✓" else "") {
+                DialogItem(str.enhanced, selected = vibrationLevel == "enhanced") {
                     vibrationLevel = "enhanced"
                     prefs.edit().putString("vibration_level", "enhanced").apply()
                     showVibration = false
@@ -1360,23 +1469,45 @@ fun CalculatorApp() {
             }
         }
     }
+    if (showKeyShape) {
+        Dialog(onDismissRequest = { showKeyShape = false }) {
+            DialogPanel {
+                BasicText(
+                    keyShapeText(lang, "title"),
+                    style = TextStyle(color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold),
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp)
+                )
+                DialogItem(keyShapeText(lang, "circle"), selected = keyShape == "circle") {
+                    keyShape = "circle"
+                    prefs.edit().putString("key_shape", "circle").apply()
+                    showKeyShape = false
+                }
+                DialogItem(keyShapeText(lang, "rect"), selected = keyShape != "circle") {
+                    keyShape = "rect"
+                    prefs.edit().putString("key_shape", "rect").apply()
+                    showKeyShape = false
+                }
+                DialogItem(str.cancel, isCancel = true) { showKeyShape = false }
+            }
+        }
+    }
     if (showLanguage) {
         Dialog(onDismissRequest = { showLanguage = false }) {
             DialogPanel {
                 BasicText(str.language, style = TextStyle(color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold), modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp))
-                DialogItem("简体中文" + if (language == "zh-CN") "  ✓" else "") {
+                DialogItem("简体中文", selected = language == "zh-CN") {
                     language = "zh-CN"
                     prefs.edit().putString("language", "zh-CN").apply()
                     syncLauncherAlias(context, "zh-CN")
                     showLanguage = false
                 }
-                DialogItem("繁體中文" + if (language == "zh-TW") "  ✓" else "") {
+                DialogItem("繁體中文", selected = language == "zh-TW") {
                     language = "zh-TW"
                     prefs.edit().putString("language", "zh-TW").apply()
                     syncLauncherAlias(context, "zh-TW")
                     showLanguage = false
                 }
-                DialogItem("English" + if (language == "en") "  ✓" else "") {
+                DialogItem("English", selected = language == "en") {
                     language = "en"
                     prefs.edit().putString("language", "en").apply()
                     syncLauncherAlias(context, "en")
@@ -1390,17 +1521,17 @@ fun CalculatorApp() {
         Dialog(onDismissRequest = { showSettings = false }) {
             DialogPanel {
                 BasicText(str.darkMode, style = TextStyle(color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold), modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp))
-                DialogItem(str.followSystem + if (darkMode == "system") "  ✓" else "") {
+                DialogItem(str.followSystem, selected = darkMode == "system") {
                     darkMode = "system"
                     prefs.edit().putString("dark_mode", "system").apply()
                     showSettings = false
                 }
-                DialogItem(str.wallpaperColor + if (darkMode == "wallpaper") "  ✓" else "") {
+                DialogItem(str.wallpaperColor, selected = darkMode == "wallpaper") {
                     darkMode = "wallpaper"
                     prefs.edit().putString("dark_mode", "wallpaper").apply()
                     showSettings = false
                 }
-                DialogItem(str.none + if (darkMode == "manual") "  ✓" else "") {
+                DialogItem(str.none, selected = darkMode == "manual") {
                     darkMode = "manual"
                     prefs.edit().putString("dark_mode", "manual").apply()
                     showSettings = false
@@ -1620,27 +1751,39 @@ private fun OobeConfirmButton(backdrop: Backdrop, text: String, onClick: () -> U
 }
 
 @Composable
-private fun HistoryButton(history: List<HistoryItem>, fg: Color, dark: Boolean, title: String, useResultLabel: String, onClear: () -> Unit, onUseResult: (String) -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
+private fun HistoryButton(
+    history: List<HistoryItem>,
+    backdrop: Backdrop,
+    fg: Color,
+    dark: Boolean,
+    title: String,
+    useResultLabel: String,
+    collapsedMaxWidth: Dp,
+    expandedWidth: Dp,
+    maxPanelHeight: Dp,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    onClear: () -> Unit,
+    onUseResult: (String) -> Unit
+) {
+    var legacyDialog by remember { mutableStateOf(false) }
+    val surfaceColor = if (dark) Color.White.copy(alpha = 0.07f) else Color.White.copy(alpha = 0.16f)
+    HistoryIsland(
+        history = history,
+        backdrop = backdrop,
+        surfaceColor = surfaceColor,
+        contentColor = fg,
+        collapsedMaxWidth = collapsedMaxWidth,
+        expandedWidth = expandedWidth,
+        maxPanelHeight = maxPanelHeight,
+        expanded = expanded,
+        onToggle = onToggle,
+        onClear = onClear,
+        onUseResult = onUseResult
+    )
 
-    Row(
-        Modifier.height(44.dp).clip(RoundedCornerShape(22.dp))
-            .combinedClickable(role = Role.Button, onClick = { expanded = true }, onDoubleClick = onClear)
-            .padding(horizontal = 10.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Canvas(Modifier.size(15.dp)) {
-            val stroke = 1.35.dp.toPx()
-            drawCircle(fg, radius = size.minDimension * 0.43f, style = Stroke(stroke))
-            drawLine(fg, center, Offset(center.x, size.height * 0.24f), stroke, StrokeCap.Round)
-            drawLine(fg, center, Offset(size.width * 0.69f, size.height * 0.59f), stroke, StrokeCap.Round)
-        }
-        BasicText(title, style = TextStyle(color = fg, fontSize = 15.sp, fontWeight = FontWeight.Medium), maxLines = 1)
-    }
-
-    if (expanded) {
-        Dialog(onDismissRequest = { expanded = false }) {
+    if (legacyDialog) {
+        Dialog(onDismissRequest = { legacyDialog = false }) {
             val panelBg = if (dark) Color(0xFF1A1A1E).copy(alpha = 0.6f) else Color(0xFFFFFFFF).copy(alpha = 0.6f)
             val panelText = if (dark) Color.White else Color(0xFF1A1A1A)
             Column(
@@ -1659,7 +1802,7 @@ private fun HistoryButton(history: List<HistoryItem>, fg: Color, dark: Boolean, 
                             Box(
                                 Modifier.clickable {
                                     onUseResult(item.result)
-                                    expanded = false
+                                    legacyDialog = false
                                 }.padding(horizontal = 8.dp, vertical = 4.dp)
                             ) {
                                 BasicText(useResultLabel, style = TextStyle(color = Color(0xFF0A84FF), fontSize = 13.sp))
@@ -1739,18 +1882,109 @@ private fun WallpaperPicker(
     }
 }
 
+
+private val LocalBackdrop = staticCompositionLocalOf<com.kyant.backdrop.Backdrop?> { null }
+
 @Composable
 private fun DialogPanel(content: @Composable ColumnScope.() -> Unit) {
+    val backdrop = LocalBackdrop.current
+    val shape: androidx.compose.ui.graphics.Shape = com.kyant.shapes.RoundedRectangle(
+        22.dp, com.kyant.shapes.RoundedCornerStyle.Continuous
+    )
     Column(
-        Modifier.fillMaxWidth().background(Color(0xFF26262A), RoundedCornerShape(22.dp)).padding(vertical = 8.dp),
+        Modifier
+            .fillMaxWidth()
+            .then(
+                if (backdrop != null) Modifier.drawBackdrop(
+                    backdrop = backdrop,
+                    shape = { shape },
+                    highlight = null,
+                    effects = {
+                        vibrancy()
+                        blur(2.dp.toPx())
+                        lens(11.dp.toPx(), 17.dp.toPx())
+                    },
+                    layerBlock = {},
+                    onDrawSurface = { drawRect(Color.Black.copy(alpha = 0.42f)) }
+                ) else Modifier.background(Color(0xFF26262A), RoundedCornerShape(22.dp))
+            )
+            .drawWithCache {
+                val outline = shape.createOutline(size, layoutDirection, this)
+                val rim = Brush.linearGradient(
+                    0f to Color.White.copy(alpha = 0.55f),
+                    0.35f to Color.White.copy(alpha = 0.22f),
+                    0.7f to Color.Transparent,
+                    1f to Color.White.copy(alpha = 0.30f),
+                    end = Offset(size.width, size.height)
+                )
+                onDrawBehind { drawOutline(outline, rim, style = Stroke(1.7.dp.toPx())) }
+            }
+            .padding(vertical = 8.dp),
         content = content
     )
 }
 
 @Composable
-private fun DialogItem(text: String, isCancel: Boolean = false, onClick: () -> Unit) {
+private fun DialogItem(text: String, isCancel: Boolean = false, selected: Boolean = false, glass: Boolean = true, onClick: () -> Unit) {
+    val backdrop = LocalBackdrop.current
+    val interaction = remember { MutableInteractionSource() }
+    val isPressed by interaction.collectIsPressedAsState()
+    val press by animateFloatAsState(
+        targetValue = if (isPressed) 1f else 0f,
+        animationSpec = spring(stiffness = 500f, dampingRatio = 0.7f)
+    )
+    val scope = rememberCoroutineScope()
+    val capsule: androidx.compose.ui.graphics.Shape = RoundedCornerShape(50)
     Box(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 24.dp, vertical = 16.dp)
+        Modifier.then(if (isCancel) Modifier.widthIn(min = 96.dp) else Modifier.fillMaxWidth())
+            .padding(horizontal = 14.dp, vertical = 5.dp)
+            .then(
+                if (backdrop != null && glass) Modifier.drawBackdrop(
+                    backdrop = backdrop,
+                    shape = { capsule },
+                    highlight = null,
+                    effects = {
+                        vibrancy()
+                        blur(2f.dp.toPx())
+                        lens(14f.dp.toPx(), 22f.dp.toPx())
+                    },
+                    layerBlock = {
+                        val s = 1f + 0.08f * press
+                        scaleX = s
+                        scaleY = s
+                    },
+                    onDrawSurface = {
+                        drawRect(if (selected) Color(0xFF0A84FF).copy(alpha = 0.55f) else Color.White.copy(alpha = 0.06f))
+                    }
+                ) else Modifier
+            )
+            .then(
+                if (glass) Modifier.drawWithCache {
+                    val outline = capsule.createOutline(size, layoutDirection, this)
+                    val rim = Brush.linearGradient(
+                        0f to Color.White.copy(alpha = 0.50f),
+                        0.4f to Color.White.copy(alpha = 0.18f),
+                        0.75f to Color.Transparent,
+                        1f to Color.White.copy(alpha = 0.28f),
+                        end = Offset(size.width, size.height)
+                    )
+                    onDrawBehind {
+                        drawOutline(outline, rim, style = Stroke(1.4.dp.toPx()))
+                        drawOutline(
+                            outline,
+                            Color.White.copy(alpha = 0.14f),
+                            style = Stroke(0.8.dp.toPx())
+                        )
+                    }
+                } else Modifier
+            )
+            .clickable(interactionSource = interaction, indication = null) {
+                scope.launch {
+                    kotlinx.coroutines.delay(110)
+                    onClick()
+                }
+            }
+            .padding(horizontal = 20.dp, vertical = 14.dp)
     ) {
         BasicText(
             text,
@@ -1758,7 +1992,6 @@ private fun DialogItem(text: String, isCancel: Boolean = false, onClick: () -> U
         )
     }
 }
-
 private val CalculatorFont = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
     FontFamily(
         Font(R.font.dm_sans),
@@ -1832,7 +2065,9 @@ fun GlassButton(
             ),
         contentAlignment = Alignment.Center
     ) {
-        GlassKeyFace(backdrop, surfaceColor, light)
+        key(LocalKeyStyle.current) {
+            GlassKeyFace(backdrop, surfaceColor, light, LocalKeyStyle.current)
+        }
         if (content != null) {
             content()
         } else {

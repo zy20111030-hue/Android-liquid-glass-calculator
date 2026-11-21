@@ -10,6 +10,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithCache
@@ -30,7 +31,13 @@ import com.kyant.backdrop.effects.vibrancy
 import kotlinx.coroutines.flow.collectLatest
 import kotlin.math.abs
 
-private val KeyShape = AbsoluteRoundedCornerShape(50)
+internal enum class KeyStyle { Circle, RoundedRect }
+
+internal val LocalKeyStyle = staticCompositionLocalOf { KeyStyle.Circle }
+
+private val CircleShape = AbsoluteRoundedCornerShape(50)
+private val RectCorner = 16.dp
+private val RectShape = AbsoluteRoundedCornerShape(RectCorner)
 private val PressIn = tween<Float>(72, easing = LinearOutSlowInEasing)
 private val QuickTap = tween<Float>(32, easing = LinearOutSlowInEasing)
 private val Release = tween<Float>(150)
@@ -45,8 +52,10 @@ private const val PressShift = 1.5f   // 远离指尖的位移
 internal fun BoxScope.GlassKeyFace(
     backdrop: Backdrop,
     surfaceColor: Color,
-    lightSource: KeyLightSource
+    lightSource: KeyLightSource,
+    style: KeyStyle = KeyStyle.Circle
 ) {
+    val idleShape = if (style == KeyStyle.Circle) CircleShape else RectShape
     val pressure = lightSource.pressure
     val direction by remember(lightSource) {
         derivedStateOf {
@@ -61,13 +70,15 @@ internal fun BoxScope.GlassKeyFace(
         }
     }
     val density = LocalDensity.current
-    val glassShape by remember(lightSource, density) {
+    val glassShape by remember(lightSource, density, style) {
         derivedStateOf {
             val size = lightSource.size
-            val radius = with(density) { (minOf(size.width, size.height) * .5f).toDp() }
+            val radius = if (style == KeyStyle.Circle) {
+                with(density) { (minOf(size.width, size.height) * .5f).toDp() }
+            } else RectCorner
             val bend = PressBend * pressure.value
             val (x, y) = direction
-            if (bend == 0.dp || direction == Offset.Zero) KeyShape else AbsoluteRoundedCornerShape(
+            if (bend == 0.dp || direction == Offset.Zero) idleShape else AbsoluteRoundedCornerShape(
                 topLeft = (radius - bend * (x + y).coerceIn(0f, 1.5f)).coerceAtLeast(0.dp),
                 topRight = (radius - bend * (-x + y).coerceIn(0f, 1.5f)).coerceAtLeast(0.dp),
                 bottomRight = (radius - bend * (-x - y).coerceIn(0f, 1.5f)).coerceAtLeast(0.dp),
@@ -137,7 +148,7 @@ internal fun BoxScope.GlassKeyFace(
                 // The backdrop clips strokes at the outside contour. Their inner halves form the bevel.
                 val bevel = Stroke(3.4.dp.toPx())
                 val rim = Stroke(1.7.dp.toPx())
-                val idleOutline = KeyShape.createOutline(size, layoutDirection, this)
+                val idleOutline = idleShape.createOutline(size, layoutDirection, this)
                 val contact = lightSource.localContact
                 val point = if (contact.isSpecified) {
                     Offset(contact.x.coerceIn(0f, size.width), contact.y.coerceIn(0f, size.height))
@@ -156,7 +167,7 @@ internal fun BoxScope.GlassKeyFace(
                 onDrawBehind {
                     val strength = pressure.value
                     val shape = glassShape
-                    val outline = if (shape === KeyShape) idleOutline else shape.createOutline(size, layoutDirection, this)
+                    val outline = if (shape === idleShape) idleOutline else shape.createOutline(size, layoutDirection, this)
                     drawOutline(outline, bevelShade, style = bevel)
                     drawOutline(outline, rimLight, style = rim)
                     if (strength > 0f) {

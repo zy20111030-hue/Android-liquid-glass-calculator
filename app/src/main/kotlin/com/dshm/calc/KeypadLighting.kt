@@ -108,7 +108,7 @@ private data class ReflectedLight(
 )
 
 // A single transparent layer lets neighboring rims respond without redrawing their backdrops.
-internal fun Modifier.drawNeighborReflections(keypad: KeypadLights, dark: Boolean): Modifier = drawWithCache {
+internal fun Modifier.drawNeighborReflections(keypad: KeypadLights, dark: Boolean, circle: Boolean = true): Modifier = drawWithCache {
     val coreWidth = 1.25.dp.toPx()
     val coreStroke = Stroke(coreWidth)
     val innerStroke = Stroke(1.dp.toPx())
@@ -147,7 +147,7 @@ internal fun Modifier.drawNeighborReflections(keypad: KeypadLights, dark: Boolea
                 val intensity = strength * settled
                 if (intensity == 0f) continue
                 val rect = neighbor.bounds
-                val corner = min(rect.width, rect.height) * .5f
+                val corner = if (circle) min(rect.width, rect.height) * .5f else 16.dp.toPx()
                 val edge = rect.deflate(coreWidth / 2f)
                 drawRoundRect(
                     light.highlight, edge.topLeft, edge.size, CornerRadius(corner - coreWidth / 2f),
