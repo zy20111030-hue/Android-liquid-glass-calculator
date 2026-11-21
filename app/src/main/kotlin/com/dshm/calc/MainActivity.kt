@@ -293,7 +293,10 @@ private fun featureIntroFor(lang: Lang): FeatureIntro = when (lang) {
             "· 长按 AC 插入括号，用括号改变运算优先级",
             "· 点按算式移动光标，长按数字或结果可选择、复制",
             "· 算式按运算优先级精确计算，分数不丢精度",
-            "· 顶栏记录最近 10 次计算，可回填结果、双击清空",
+            "· 顶部灵动岛常驻最近一次计算，点开可查看最近 10 条",
+            "· 长按右上角圆点展开液态玻璃菜单，上下滑动即可选择",
+            "· 设置子页也是玻璃质感，选中项会亮起蓝底",
+            "· 按键形状可选圆角矩形或圆形",
             "· 深色/浅色主题、自定义壁纸、三档震动反馈"
         ),
         "继续"
@@ -306,7 +309,10 @@ private fun featureIntroFor(lang: Lang): FeatureIntro = when (lang) {
             "· 長按 AC 插入括號，用括號改變運算優先級",
             "· 點按算式移動游標，長按數字或結果可選取、複製",
             "· 算式按運算優先級精確計算，分數不丟精度",
-            "· 頂欄記錄最近 10 次計算，可回填結果、雙擊清空",
+            "· 頂部靈動島常駐最近一次計算，點開可查看最近 10 條",
+            "· 長按右上角圓點展開液態玻璃選單，上下滑動即可選擇",
+            "· 設定子頁同樣是玻璃質感，選取項目會亮起藍底",
+            "· 按鍵形狀可選圓角矩形或圓形",
             "· 深色/淺色主題、自訂桌布、三檔震動回饋"
         ),
         "繼續"
@@ -319,7 +325,10 @@ private fun featureIntroFor(lang: Lang): FeatureIntro = when (lang) {
             "· Long-press AC to insert parentheses for precedence control",
             "· Tap to move the cursor. Hold a number or result to select and copy it",
             "· Expressions are evaluated exactly with operator precedence, no precision loss",
-            "· Top bar keeps the last 10 calculations; reuse results, double-tap to clear",
+            "· The Dynamic Island at the top keeps your latest result; tap to open the last 10",
+            "· Long-press the dot at the top-right to open the glass menu, then slide to pick",
+            "· Settings sub-pages are glass too, with a blue highlight for the current choice",
+            "· Key shape can be rounded rectangle or circle",
             "· Dark/light theme, custom wallpaper, three-level haptic feedback"
         ),
         "Continue"
