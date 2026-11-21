@@ -21,6 +21,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.drawBackdrop
@@ -31,8 +32,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.mapNotNull
 import kotlin.math.abs
 
-private val KeyCorner = 16.dp
-private val KeyShape = AbsoluteRoundedCornerShape(KeyCorner)
+private val KeyShape = AbsoluteRoundedCornerShape(50)
 private val PressIn = tween<Float>(72, easing = LinearOutSlowInEasing)
 private val QuickTap = tween<Float>(32, easing = LinearOutSlowInEasing)
 private val Release = tween<Float>(150)
@@ -58,15 +58,18 @@ internal fun BoxScope.GlassKeyFace(
             } else Offset.Zero
         }
     }
-    val glassShape by remember(lightSource) {
+    val density = LocalDensity.current
+    val glassShape by remember(lightSource, density) {
         derivedStateOf {
+            val size = lightSource.size
+            val radius = with(density) { (minOf(size.width, size.height) * .5f).toDp() }
             val bend = 2.8.dp * pressure.value
             val (x, y) = direction
             if (bend == 0.dp || direction == Offset.Zero) KeyShape else AbsoluteRoundedCornerShape(
-                topLeft = KeyCorner + bend * (-x - y).coerceIn(0f, 1.5f),
-                topRight = KeyCorner + bend * (x - y).coerceIn(0f, 1.5f),
-                bottomRight = KeyCorner + bend * (x + y).coerceIn(0f, 1.5f),
-                bottomLeft = KeyCorner + bend * (-x + y).coerceIn(0f, 1.5f)
+                topLeft = (radius - bend * (x + y).coerceIn(0f, 1.5f)).coerceAtLeast(0.dp),
+                topRight = (radius - bend * (-x + y).coerceIn(0f, 1.5f)).coerceAtLeast(0.dp),
+                bottomRight = (radius - bend * (-x - y).coerceIn(0f, 1.5f)).coerceAtLeast(0.dp),
+                bottomLeft = (radius - bend * (x - y).coerceIn(0f, 1.5f)).coerceAtLeast(0.dp)
             )
         }
     }

@@ -106,7 +106,6 @@ internal fun Modifier.drawNeighborReflections(keypad: KeypadLights, dark: Boolea
     val coreStroke = Stroke(coreWidth)
     val innerStroke = Stroke(1.dp.toPx())
     val innerInset = 2.25.dp.toPx()
-    val corner = 16.dp.toPx()
     val lights = keypad.emitters.mapNotNull { source ->
         if (source.bounds.isEmpty) return@mapNotNull null
         val local = source.localContact
@@ -141,6 +140,7 @@ internal fun Modifier.drawNeighborReflections(keypad: KeypadLights, dark: Boolea
                 val intensity = strength * settled
                 if (intensity == 0f) continue
                 val rect = neighbor.bounds
+                val corner = min(rect.width, rect.height) * .5f
                 val edge = rect.deflate(coreWidth / 2f)
                 drawRoundRect(
                     light.highlight, edge.topLeft, edge.size, CornerRadius(corner - coreWidth / 2f),

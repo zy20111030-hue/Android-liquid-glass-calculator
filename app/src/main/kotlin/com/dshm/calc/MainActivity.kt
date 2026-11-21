@@ -1,8 +1,6 @@
 package com.dshm.calc
 
-import android.content.ClipData
 import android.content.ComponentName
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -13,6 +11,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.SystemClock
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -35,6 +34,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -49,6 +49,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -60,6 +61,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -76,9 +78,17 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.path
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.pointer.pointerInput
@@ -88,17 +98,26 @@ import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onLongClick
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -111,6 +130,7 @@ import com.kyant.backdrop.effects.vibrancy
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import java.io.File
 import java.math.BigDecimal
 import java.math.BigInteger
@@ -217,24 +237,33 @@ data class Str(
     val followSystem: String, val wallpaperColor: String, val none: String,
     val off: String, val standard: String, val enhanced: String, val cancel: String,
     val version: String, val ok: String, val permText: String, val grant: String,
-    val restoreDefault: String, val close: String, val error: String, val copy: String
+    val restoreDefault: String, val close: String, val error: String, val copy: String,
+    val history: String, val backspace: String, val clear: String, val insertParen: String,
+    val add: String, val subtract: String, val multiply: String, val divide: String, val equalsLabel: String,
+    val selectAll: String, val done: String, val selectValue: String, val useResult: String
 )
 
 private val strings = mapOf(
     Lang.ZH_CN to Str(
         "计算器", "设置", "深色模式", "壁纸", "震动", "语言", "关于",
         "跟随系统", "壁纸取色", "无", "关闭", "标准", "增强", "取消",
-        "版本 V3.0-release", "确定", "更换壁纸需要「允许访问所有文件」权限", "去授权", "恢复默认", "关闭", "错误", "复制"
+        "版本 V3.0-release", "确定", "更换壁纸需要「允许访问所有文件」权限", "去授权", "恢复默认", "关闭", "错误", "复制",
+        "历史", "退格", "清除", "插入括号", "加", "减", "乘", "除", "等于",
+        "全选", "完成", "选择数字", "回填"
     ),
     Lang.ZH_TW to Str(
         "計算器", "設置", "深色模式", "桌布", "震動", "語言", "關於",
         "跟隨系統", "桌布取色", "無", "關閉", "標準", "增強", "取消",
-        "版本 V3.0-release", "確定", "更換桌布需要「允許存取所有檔案」權限", "去授權", "恢復預設", "關閉", "錯誤", "複製"
+        "版本 V3.0-release", "確定", "更換桌布需要「允許存取所有檔案」權限", "去授權", "恢復預設", "關閉", "錯誤", "複製",
+        "歷史", "退格", "清除", "插入括號", "加", "減", "乘", "除", "等於",
+        "全選", "完成", "選取數字", "帶入"
     ),
     Lang.EN to Str(
         "Calculator", "Settings", "Dark mode", "Wallpaper", "Vibration", "Language", "About",
         "Follow system", "Wallpaper color", "None", "Off", "Standard", "Enhanced", "Cancel",
-        "Version V3.0-release", "OK", "Changing wallpaper requires 'All files access' permission", "Grant", "Restore default", "Close", "Error", "Copy"
+        "Version V3.0-release", "OK", "Changing wallpaper requires 'All files access' permission", "Grant", "Restore default", "Close", "Error", "Copy",
+        "History", "Backspace", "Clear", "Insert parentheses", "Plus", "Minus", "Multiply", "Divide", "Equals",
+        "Select all", "Done", "Select number", "Use result"
     )
 )
 
@@ -249,6 +278,7 @@ private fun featureIntroFor(lang: Lang): FeatureIntro = when (lang) {
             "· 按住玻璃按键，触点一侧下压，旁边的键缘映出微光",
             "· 长按 ÷ 输入分数：先输分母再输分子，最多两层嵌套",
             "· 长按 AC 插入括号，用括号改变运算优先级",
+            "· 点按算式移动光标，长按数字或结果可选择、复制",
             "· 算式按运算优先级精确计算，分数不丢精度",
             "· 顶栏记录最近 10 次计算，可回填结果、双击清空",
             "· 深色/浅色主题、自定义壁纸、三档震动反馈"
@@ -261,6 +291,7 @@ private fun featureIntroFor(lang: Lang): FeatureIntro = when (lang) {
             "· 按住玻璃按鍵，觸點一側下壓，旁邊的鍵緣映出微光",
             "· 長按 ÷ 輸入分數：先輸分母再輸分子，最多兩層巢狀",
             "· 長按 AC 插入括號，用括號改變運算優先級",
+            "· 點按算式移動游標，長按數字或結果可選取、複製",
             "· 算式按運算優先級精確計算，分數不丟精度",
             "· 頂欄記錄最近 10 次計算，可回填結果、雙擊清空",
             "· 深色/淺色主題、自訂桌布、三檔震動回饋"
@@ -273,6 +304,7 @@ private fun featureIntroFor(lang: Lang): FeatureIntro = when (lang) {
             "· Glass keys dip under your finger and light the edges of nearby keys",
             "· Long-press ÷ to enter a fraction (denominator first, up to 2 levels)",
             "· Long-press AC to insert parentheses for precedence control",
+            "· Tap to move the cursor. Hold a number or result to select and copy it",
             "· Expressions are evaluated exactly with operator precedence, no precision loss",
             "· Top bar keeps the last 10 calculations; reuse results, double-tap to clear",
             "· Dark/light theme, custom wallpaper, three-level haptic feedback"
@@ -418,38 +450,33 @@ class FracEditor {
             cur.text = cur.text.substring(0, off) + c + cur.text.substring(off)
             charOff = off + 1
         } else {
-            slot.add(index, FItem.Num(c.toString()))
-            charOff = 1
+            val previous = slot.getOrNull(index - 1) as? FItem.Num
+            if (previous == null) {
+                slot.add(index, FItem.Num(c.toString()))
+                charOff = 1
+            } else {
+                index--
+                previous.text += c
+                charOff = previous.text.length
+            }
         }
     }
 
-    fun insertOp(sym: String) {
-        val cur = slot.getOrNull(index)
-        if (cur is FItem.Num) {
-            val off = charOff.coerceIn(0, cur.text.length)
-            if (off == 0) {
-                slot.add(index, FItem.Op(sym))
-                index += 1
-                charOff = 0
-                return
-            }
-            if (off < cur.text.length) {
-                val suffix = cur.text.substring(off)
-                cur.text = cur.text.substring(0, off)
-                slot.add(index + 1, FItem.Op(sym))
-                slot.add(index + 2, FItem.Num(suffix))
-                index += 2
-                charOff = 0
-                return
-            }
-            index += 1
-            slot.add(index, FItem.Op(sym))
-            index += 1
-            charOff = 0
-            return
+    private fun splitAtCursor(): Int {
+        val number = slot.getOrNull(index) as? FItem.Num ?: return index
+        val offset = charOff.coerceIn(0, number.text.length)
+        if (offset == 0) return index
+        if (offset < number.text.length) {
+            slot.add(index + 1, FItem.Num(number.text.substring(offset)))
+            number.text = number.text.substring(0, offset)
         }
-        slot.add(index, FItem.Op(sym))
-        index += 1
+        return index + 1
+    }
+
+    fun insertOp(sym: String) {
+        val at = splitAtCursor()
+        slot.add(at, FItem.Op(sym))
+        index = at + 1
         charOff = 0
     }
 
@@ -460,7 +487,10 @@ class FracEditor {
             if (off > 0) {
                 cur.text = cur.text.substring(0, off - 1) + cur.text.substring(off)
                 charOff = off - 1
-                if (cur.text.isEmpty()) { slot.removeAt(index); charOff = 0 }
+                if (cur.text.isEmpty()) {
+                    slot.removeAt(index)
+                    mergeNumbersAtCursor()
+                }
                 return
             }
         }
@@ -473,6 +503,7 @@ class FracEditor {
                 if (pf.at < slot.size && slot[pf.at] === pf.paren) slot.removeAt(pf.at)
                 index = pf.at
                 charOff = 0
+                mergeNumbersAtCursor()
                 return
             }
             val ff = stack.lastOrNull()
@@ -482,26 +513,42 @@ class FracEditor {
                 if (ff.fracAt < slot.size && slot[ff.fracAt] === ff.frac) slot.removeAt(ff.fracAt)
                 index = ff.fracAt
                 charOff = 0
+                mergeNumbersAtCursor()
                 return
             }
         }
         if (index > 0) {
-            val prev = slot.removeAt(index - 1)
-            index -= 1
+            index--
+            val prev = slot[index]
+            if (prev is FItem.Num && prev.text.length > 1) {
+                prev.text = prev.text.dropLast(1)
+                charOff = prev.text.length
+                return
+            }
+            slot.removeAt(index)
             charOff = 0
-            while (stack.isNotEmpty() && stack.last().frac === prev) stack.removeAt(stack.size - 1)
-            val pf = parenStack.lastOrNull()
-            if (pf != null && pf.paren === prev) parenStack.removeAt(parenStack.size - 1)
+            mergeNumbersAtCursor()
         }
     }
 
+    fun mergeNumbersAtCursor() {
+        val left = slot.getOrNull(index - 1) as? FItem.Num ?: return
+        val right = slot.getOrNull(index) as? FItem.Num ?: return
+        charOff = left.text.length + charOff.coerceIn(0, right.text.length)
+        left.text += right.text
+        slot.removeAt(index)
+        index--
+    }
+
     fun clear() {
-        root.clear(); stack.clear(); slot = root; index = 0; charOff = 0
+        root.clear()
+        moveToEnd()
     }
 
     fun newFraction() {
         if (stack.size + parenStack.size >= 3) return
         val f = FItem.FracItem()
+        index = splitAtCursor()
         slot.add(index, f)
         stack.add(FracFrame(slot, index, f, false))
         slot = f.den; index = 0; charOff = 0
@@ -512,6 +559,7 @@ class FracEditor {
     fun newParen() {
         if (stack.size + parenStack.size >= 3) return
         val p = FItem.ParenItem()
+        index = splitAtCursor()
         slot.add(index, p)
         parenStack.add(ParenFrame(slot, index, p))
         slot = p.inner; index = 0; charOff = 0
@@ -655,17 +703,27 @@ private fun resultToItem(s: String): FItem {
 
 private const val BAR_GAP = 6f
 
-private class DText(val text: String, val x: Float, val y: Float)
+private class DText(val layout: TextLayoutResult, val x: Float, val y: Float)
 private class DBar(val x: Float, val y: Float, val w: Float)
 
-private class CTarget(
-    val slot: MutableList<FItem>,
-    val index: Int,
-    val rect: Rect,
-    val charXs: List<Float>,
+private class SlotGeometry(
+    val items: MutableList<FItem>,
+    val top: Float,
     val fracPath: List<FracFrame>,
-    val parenPath: List<ParenFrame>,
-    val kind: Int
+    val parenPath: List<ParenFrame>
+) {
+    val boundaries = mutableListOf<Float>()
+    val digitStops = mutableMapOf<Int, List<Float>>()
+}
+
+private class InsertionPoint(val slot: SlotGeometry, val index: Int)
+
+private class CTarget(
+    val rect: Rect,
+    val token: FItem?,
+    val before: InsertionPoint,
+    val after: InsertionPoint = before,
+    val digitStops: List<Float> = emptyList()
 )
 
 private class LayoutResult(
@@ -673,18 +731,31 @@ private class LayoutResult(
     val height: Float,
     val texts: List<DText>,
     val bars: List<DBar>,
-    val targets: List<CTarget>
+    val targets: List<CTarget>,
+    val slots: List<SlotGeometry>,
+    val lineHeight: Float,
+    val caretWidth: Float
 )
 
 private class LayoutEngine(private val tm: TextMeasurer, private val style: TextStyle) {
-    private val lineH = tm.measure(AnnotatedString("0"), style).size.height.toFloat()
+    private val zero = tm.measure(AnnotatedString("0"), style)
+    private val lineH = zero.size.height.toFloat()
+    private val caretWidth = with(zero.layoutInput.density) { 2.dp.toPx() }
+    private val emptyWidth = maxOf(with(zero.layoutInput.density) { 16.dp.toPx() }, zero.size.width * 0.75f)
     private val texts = mutableListOf<DText>()
     private val bars = mutableListOf<DBar>()
     private val targets = mutableListOf<CTarget>()
+    private val slots = mutableListOf<SlotGeometry>()
+    private val measuredText = mutableMapOf<String, TextLayoutResult>()
 
-    private fun tw(s: String) = tm.measure(AnnotatedString(s), style).size.width.toFloat()
+    private fun textLayout(s: String) = measuredText.getOrPut(s) {
+        tm.measure(AnnotatedString(s), style, softWrap = false, maxLines = 1)
+    }
+
+    private fun tw(s: String) = textLayout(s).size.width.toFloat()
 
     private fun measure(items: List<FItem>): Pair<Float, Float> {
+        if (items.isEmpty()) return emptyWidth to lineH
         var w = 0f
         var h = lineH
         for (item in items) {
@@ -709,27 +780,39 @@ private class LayoutEngine(private val tm: TextMeasurer, private val style: Text
 
     fun build(root: MutableList<FItem>): LayoutResult {
         val (w, h) = measure(root)
-        place(root, 0f, 0f, h, emptyList(), emptyList())
-        return LayoutResult(w, h, texts, bars, targets)
+        val rootSlot = place(root, 0f, 0f, h, emptyList(), emptyList())
+        targets.add(CTarget(Rect(w, 0f, w + caretWidth, h), root.lastOrNull(), InsertionPoint(rootSlot, root.size)))
+        return LayoutResult(w + caretWidth, h, texts, bars, targets, slots, lineH, caretWidth)
     }
 
-    private fun place(items: MutableList<FItem>, x0: Float, y0: Float, rowH: Float, fp: List<FracFrame>, pp: List<ParenFrame>) {
+    private fun place(items: MutableList<FItem>, x0: Float, y0: Float, rowH: Float, fp: List<FracFrame>, pp: List<ParenFrame>): SlotGeometry {
         var x = x0
         val ty = y0 + (rowH - lineH) / 2f
+        val slot = SlotGeometry(items, ty, fp, pp)
+        slots.add(slot)
+        if (items.isEmpty()) {
+            slot.boundaries.add(x0 + (emptyWidth - caretWidth) / 2f)
+            targets.add(CTarget(Rect(x0, ty, x0 + emptyWidth, ty + lineH), null, InsertionPoint(slot, 0)))
+            return slot
+        }
         items.forEachIndexed { idx, item ->
+            slot.boundaries.add(x)
+            val before = InsertionPoint(slot, idx)
+            val after = InsertionPoint(slot, idx + 1)
             when (item) {
                 is FItem.Num -> {
-                    val w = tw(item.text)
-                    texts.add(DText(item.text, x, ty))
-                    val cxs = ArrayList<Float>()
-                    for (i in 0..item.text.length) cxs.add(x + tw(item.text.substring(0, i)))
-                    targets.add(CTarget(items, idx, Rect(x, ty, x + w, ty + lineH), cxs, fp, pp, 0))
+                    val shaped = textLayout(item.text)
+                    val w = shaped.size.width.toFloat()
+                    texts.add(DText(shaped, x, ty))
+                    val stops = (0..item.text.length).map { x + shaped.getHorizontalPosition(it, usePrimaryDirection = true) }
+                    slot.digitStops[idx] = stops
+                    targets.add(CTarget(Rect(x, ty, x + w, ty + lineH), item, before, digitStops = stops))
                     x += w
                 }
                 is FItem.Op -> {
                     val w = tw(item.sym)
-                    texts.add(DText(item.sym, x, ty))
-                    targets.add(CTarget(items, idx, Rect(x, ty, x + w, ty + lineH), emptyList(), fp, pp, 0))
+                    texts.add(DText(textLayout(item.sym), x, ty))
+                    targets.add(CTarget(Rect(x, ty, x + w, ty + lineH), item, before, after))
                     x += w
                 }
                 is FItem.FracItem -> {
@@ -741,6 +824,8 @@ private class LayoutEngine(private val tm: TextMeasurer, private val style: Text
                     place(item.num, x + 4f + (fw - 8f - nw) / 2f, fy, nh, fp + FracFrame(items, idx, item, true), pp)
                     bars.add(DBar(x, fy + nh + BAR_GAP / 2f, fw))
                     place(item.den, x + 4f + (fw - 8f - dw) / 2f, fy + nh + BAR_GAP, dh, fp + FracFrame(items, idx, item, false), pp)
+                    targets.add(CTarget(Rect(x, fy, x + 4f, fy + fh), item, before))
+                    targets.add(CTarget(Rect(x + fw - 4f, fy, x + fw, fy + fh), item, after))
                     x += fw
                 }
                 is FItem.ParenItem -> {
@@ -750,45 +835,44 @@ private class LayoutEngine(private val tm: TextMeasurer, private val style: Text
                     val ph = maxOf(lineH, ih)
                     val py = y0 + (rowH - ph) / 2f
                     val ip = pp + ParenFrame(items, idx, item)
-                    texts.add(DText("(", x, py + (ph - lineH) / 2f))
-                    targets.add(CTarget(item.inner, 0, Rect(x, py, x + lw, py + ph), emptyList(), fp, ip, 1))
-                    place(item.inner, x + lw, py + (ph - ih) / 2f, ih, fp, ip)
-                    texts.add(DText(")", x + lw + iw, py + (ph - lineH) / 2f))
-                    targets.add(CTarget(items, idx + 1, Rect(x + lw + iw, py, x + lw + iw + rw, py + ph), emptyList(), fp, pp, 2))
+                    texts.add(DText(textLayout("("), x, py + (ph - lineH) / 2f))
+                    val inner = place(item.inner, x + lw, py + (ph - ih) / 2f, ih, fp, ip)
+                    targets.add(CTarget(Rect(x, py, x + lw, py + ph), item, before, InsertionPoint(inner, 0)))
+                    texts.add(DText(textLayout(")"), x + lw + iw, py + (ph - lineH) / 2f))
+                    targets.add(CTarget(Rect(x + lw + iw, py, x + lw + iw + rw, py + ph), item, InsertionPoint(inner, item.inner.size), after))
                     x += lw + iw + rw
                 }
             }
         }
-        targets.add(CTarget(items, items.size, Rect(x, ty, x + 10f, ty + lineH), listOf(x), fp, pp, 0))
+        slot.boundaries.add(x)
+        return slot
     }
 }
 
-private fun hitTest(layout: LayoutResult, editor: FracEditor, pos: Offset) {
-    val exact = layout.targets.firstOrNull { it.rect.contains(pos) }
-    val t = exact ?: layout.targets.minByOrNull { r ->
-        val dy = if (pos.y < r.rect.top) r.rect.top - pos.y else if (pos.y > r.rect.bottom) pos.y - r.rect.bottom else 0f
-        val dx = if (pos.x < r.rect.left) r.rect.left - pos.x else if (pos.x > r.rect.right) pos.x - r.rect.right else 0f
-        dy * 100f + dx
-    } ?: return
-    val num = t.slot.getOrNull(t.index) as? FItem.Num
-    if (num != null && t.charXs.isNotEmpty()) {
-        var best = 0
-        var bestD = Float.MAX_VALUE
-        t.charXs.forEachIndexed { i, cx ->
-            val d = kotlin.math.abs(cx - pos.x)
-            if (d < bestD) { bestD = d; best = i }
-        }
-        editor.setCursor(t.slot, t.index, best.coerceIn(0, num.text.length), t.fracPath, t.parenPath)
-    } else {
-        editor.setCursor(t.slot, t.index, 0, t.fracPath, t.parenPath)
+private fun targetAt(layout: LayoutResult, pos: Offset): CTarget? =
+    layout.targets.firstOrNull { it.rect.contains(pos) } ?: layout.targets.minByOrNull {
+        val dx = pos.x - pos.x.coerceIn(it.rect.left, it.rect.right)
+        val dy = pos.y - pos.y.coerceIn(it.rect.top, it.rect.bottom)
+        dx * dx + dy * dy
     }
+
+private fun tokenAt(layout: LayoutResult, pos: Offset): FItem? = targetAt(layout, pos)?.token
+
+private class DisplayTap(val time: Long, val position: Offset, val revision: Int, val token: FItem?, val wasResult: Boolean)
+
+private fun hitTest(layout: LayoutResult, editor: FracEditor, pos: Offset): FItem? {
+    val target = targetAt(layout, pos) ?: return null
+    val point = if (pos.x < target.rect.center.x) target.before else target.after
+    val offset = target.digitStops.indices.minByOrNull { kotlin.math.abs(target.digitStops[it] - pos.x) } ?: 0
+    editor.setCursor(point.slot.items, point.index, offset, point.slot.fracPath, point.slot.parenPath)
+    return target.token
 }
 
 private fun cursorRectOf(layout: LayoutResult, editor: FracEditor): Rect? {
-    val t = layout.targets.firstOrNull { it.slot === editor.slot && it.index == editor.index && it.kind == 0 && it.charXs.isNotEmpty() } ?: return null
-    val i = editor.charOff.coerceIn(0, t.charXs.size - 1)
-    val cx = t.charXs[i]
-    return Rect(cx, t.rect.top, cx, t.rect.bottom)
+    val slot = layout.slots.firstOrNull { it.items === editor.slot } ?: return null
+    val stops = slot.digitStops[editor.index]
+    val x = stops?.get(editor.charOff.coerceIn(0, stops.lastIndex)) ?: slot.boundaries.getOrNull(editor.index) ?: return null
+    return Rect(x, slot.top, x + layout.caretWidth, slot.top + layout.lineHeight)
 }
 
 private fun exprText(items: List<FItem>): String = items.joinToString("") {
@@ -799,6 +883,11 @@ private fun exprText(items: List<FItem>): String = items.joinToString("") {
         is FItem.ParenItem -> "(${exprText(it.inner)})"
     }
 }
+
+private val binaryDisplayOperator = Regex("""(?<=[0-9)])([+×÷/\-])""")
+
+private fun formatDisplayExpression(expression: String): String =
+    binaryDisplayOperator.replace(expression) { " ${it.value} " }.replace('-', '−')
 
 @Composable
 private fun CursorBar(style: TextStyle, color: Color) {
@@ -998,16 +1087,18 @@ fun CalculatorApp() {
     var wallpaperPath by remember { mutableStateOf(prefs.getString("wallpaper", null)) }
     val wallpaper = remember(wallpaperPath) { wallpaperPath?.let { decodeWallpaper(it) } }
     val effectiveWallpaper = wallpaper ?: defaultWallpaper
+    val wallpaperIsDark = remember(effectiveWallpaper) { effectiveWallpaper?.let(::isWallpaperDark) }
 
     val dark = when (darkMode) {
         "system" -> isSystemInDarkTheme()
-        "wallpaper" -> effectiveWallpaper?.let { isWallpaperDark(it) } ?: manualDark
+        "wallpaper" -> wallpaperIsDark ?: manualDark
         else -> manualDark
     }
     val gradientColors = if (dark) DarkGradient else LightGradient
     val fg = if (dark) Color.White else Color(0xFF15151A)
     val buttonSurface = if (dark) Color(0xFF0D0D10).copy(alpha = 0.5f) else Color(0xFFFFFFFF).copy(alpha = 0.42f)
-    val displayColor = if (dark) Color.White.copy(alpha = 0.6f) else Color(0xFF5A5A5A).copy(alpha = 0.9f)
+    val lightDisplayText = wallpaperIsDark ?: dark
+    val displayColor = if (lightDisplayText) Color(0xFFF4F6FA) else Color(0xFF181B20)
 
     var showMenu by remember { mutableStateOf(false) }
     var showVibration by remember { mutableStateOf(false) }
@@ -1024,6 +1115,10 @@ fun CalculatorApp() {
 
     val editor = remember { FracEditor() }
     var revision by remember { mutableStateOf(0) }
+    var resultRevision by remember { mutableStateOf(-1) }
+    var evaluationFailed by remember { mutableStateOf(false) }
+    var selectionDocument by remember { mutableStateOf<SelectableExpression?>(null) }
+    var selectedRange by remember { mutableStateOf(TextRange.Zero) }
     val history = remember {
         mutableStateListOf<HistoryItem>().apply {
             addAll(deserializeHistory(prefs.getString("history", "") ?: ""))
@@ -1039,7 +1134,25 @@ fun CalculatorApp() {
         persistHistory()
     }
 
+    fun selectValue(item: FItem? = null) {
+        val document = SelectableExpression(editor)
+        selectedRange = if (resultRevision == revision) document.all else document.rangeOf(item)
+        selectionDocument = document
+    }
+
+    fun prepareInput(startNewResult: Boolean = false): Boolean {
+        val document = selectionDocument
+        if (document != null) {
+            document.prepareEdit(editor, selectedRange)
+            selectionDocument = null
+            return !selectedRange.collapsed
+        }
+        if (resultRevision == revision && (startNewResult || evaluationFailed)) editor.clear()
+        return false
+    }
+
     fun useResult(result: String) {
+        prepareInput(startNewResult = true)
         val item = resultToItem(result)
         if (editor.root.isEmpty()) {
             editor.root.add(item)
@@ -1055,53 +1168,61 @@ fun CalculatorApp() {
     }
 
     fun onDigit(d: String) {
+        prepareInput(startNewResult = true)
         editor.insertChar(d[0])
         revision++
     }
 
     fun onDot() {
-        val cur = editor.slot.getOrNull(editor.index)
-        if (cur is FItem.Num) {
-            if (cur.text.contains(".")) return
-            editor.insertChar('.')
-        } else {
-            editor.slot.add(editor.index, FItem.Num("0."))
-            editor.charOff = 2
+        val replaced = prepareInput(startNewResult = true)
+        val number = editor.slot.getOrNull(editor.index) as? FItem.Num
+            ?: editor.slot.getOrNull(editor.index - 1) as? FItem.Num
+        if (number?.text?.contains('.') == true) {
+            if (replaced) revision++
+            return
         }
+        if (number == null) editor.insertChar('0')
+        editor.insertChar('.')
         revision++
     }
 
     fun onOperator(op: String) {
+        prepareInput()
         editor.insertOp(op)
         revision++
     }
 
     fun onBackspace() {
-        editor.backspace()
+        if (!prepareInput()) editor.backspace()
         revision++
     }
 
     fun onClear() {
+        selectionDocument = null
         editor.clear()
         revision++
     }
 
     fun onFraction() {
+        prepareInput(startNewResult = true)
         editor.newFraction()
         revision++
     }
 
     fun onParen() {
+        prepareInput(startNewResult = true)
         editor.newParen()
         revision++
     }
 
     fun onNextField() {
+        selectionDocument = null
         editor.nextField()
         revision++
     }
 
     fun onEquals() {
+        selectionDocument = null
         val text = exprText(editor.root)
         val r = evalSlot(editor.root)
         if (r != null) {
@@ -1127,6 +1248,8 @@ fun CalculatorApp() {
             editor.charOff = 0
         }
         revision++
+        evaluationFailed = r == null
+        resultRevision = revision
     }
 
     fun requestWallpaper() {
@@ -1176,60 +1299,154 @@ fun CalculatorApp() {
             ) {
                 BasicText(
                     str.title,
-                    style = TextStyle(color = fg, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    style = TextStyle(color = displayColor, fontSize = 19.sp, fontWeight = FontWeight.Medium),
+                    maxLines = 1
                 )
-                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                    HistoryPill(history, fg, dark, str.copy, ::clearHistory, onUseResult = { useResult(it) })
+                Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
+                    HistoryButton(history, displayColor, dark, str.history, str.useResult, ::clearHistory, ::useResult)
                 }
-                Box(Modifier.size(44.dp).clickable { showMenu = true }, contentAlignment = Alignment.Center) {
-                    BasicText("⋮", style = TextStyle(color = fg, fontSize = 24.sp))
+                Box(
+                    Modifier.size(44.dp).clickable(role = Role.Button) { showMenu = true }
+                        .semantics { contentDescription = str.settings },
+                    contentAlignment = Alignment.Center
+                ) {
+                    BasicText("⋮", style = TextStyle(color = displayColor, fontSize = 24.sp))
                 }
             }
 
             val fontSp = when {
                 editor.textLen() > 10 -> 40.sp
                 editor.textLen() > 7 -> 48.sp
-                else -> 60.sp
+                else -> 62.sp
             }
-            val dispStyle = TextStyle(color = displayColor, fontSize = fontSp, fontWeight = FontWeight.Light)
+            val density = LocalDensity.current
+            val resultShadow = with(density) {
+                Shadow(
+                    color = if (lightDisplayText) Color(0x99070D19) else Color(0x90FFFFFF),
+                    offset = Offset(0f, 0.8.dp.toPx()),
+                    blurRadius = 1.8.dp.toPx()
+                )
+            }
+            val dispStyle = TextStyle(color = displayColor, fontSize = fontSp, fontFamily = CalculatorFont, shadow = resultShadow)
             val textMeasurer = rememberTextMeasurer()
             val rev = revision
-            val layout = remember(rev, fontSp) {
+            val layout = remember(rev, textMeasurer, dispStyle) {
                 if (editor.root.isEmpty()) null else LayoutEngine(textMeasurer, dispStyle).build(editor.root)
             }
-            val cursorAlpha by rememberInfiniteTransition().animateFloat(
-                initialValue = 1f, targetValue = 0.15f,
-                animationSpec = infiniteRepeatable(tween(520, easing = LinearEasing), RepeatMode.Reverse)
-            )
-            val density = LocalDensity.current
-
-            Box(
-                Modifier.fillMaxWidth().weight(1f).padding(end = 8.dp),
-                contentAlignment = Alignment.CenterEnd
+            val expression = remember(rev) { exprText(editor.root) }
+            val document = selectionDocument
+            val complete = resultRevision == rev
+            val gestureConfig = LocalViewConfiguration.current
+            var previousTap by remember { mutableStateOf<DisplayTap?>(null) }
+            val editing = document == null && layout != null && !complete
+            val scroll = rememberScrollState()
+            val caret = if (editing) cursorRectOf(layout, editor) else null
+            var blinkOn by remember(rev, editing) { mutableStateOf(true) }
+            LaunchedEffect(rev, editing) {
+                while (editing) {
+                    delay(530)
+                    blinkOn = !blinkOn
+                }
+            }
+            LaunchedEffect(rev, layout, editing, scroll.viewportSize, scroll.maxValue) {
+                val viewport = scroll.viewportSize
+                if (document != null || viewport <= 0 || scroll.maxValue == Int.MAX_VALUE) return@LaunchedEffect
+                if (complete) {
+                    scroll.scrollTo(scroll.maxValue)
+                } else if (caret != null) {
+                    val margin = with(density) { 6.dp.toPx() }
+                    val target = when {
+                        caret.right + margin > scroll.value + viewport -> caret.right + margin - viewport
+                        caret.left - margin < scroll.value -> caret.left - margin
+                        else -> return@LaunchedEffect
+                    }
+                    scroll.scrollTo(target.toInt().coerceIn(0, scroll.maxValue))
+                }
+            }
+            BoxWithConstraints(
+                Modifier.fillMaxWidth().weight(1f).padding(end = 10.dp),
+                contentAlignment = Alignment.BottomEnd
             ) {
-                if (layout == null) {
-                    BasicText("0", style = dispStyle)
-                } else {
-                    Row(
-                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.End,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Canvas(
-                            Modifier
-                                .size(with(density) { layout.width.toDp() }, with(density) { layout.height.toDp() })
-                                .pointerInput(fontSp, rev) {
-                                    detectTapGestures { offset ->
-                                        hitTest(layout, editor, offset)
-                                        revision++
-                                    }
-                                }
+                val last = history.firstOrNull()
+                val showExpression = complete && !evaluationFailed && document == null && layout != null &&
+                    maxHeight >= with(density) { layout.height.toDp() + 26.sp.toDp() }
+                val leaveHandleSpace = maxHeight >= 160.dp
+                Column(horizontalAlignment = Alignment.End) {
+                    if (showExpression && last != null) {
+                        SelectionContainer {
+                            BasicText(
+                                remember(last.expr) { formatDisplayExpression(last.expr) },
+                                modifier = Modifier.padding(bottom = 3.dp),
+                                style = TextStyle(color = displayColor.copy(alpha = 0.90f), fontSize = 17.sp, shadow = resultShadow),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                    if (document != null) {
+                        DisplaySelection(
+                            document.text, selectedRange, { selectedRange = it }, dispStyle, displayColor,
+                            lightDisplayText, str.copy, str.selectAll, str.done, { selectionDocument = null }
+                        )
+                        if (leaveHandleSpace) Spacer(Modifier.height(18.dp))
+                    } else if (layout == null) {
+                        BasicText("0", style = dispStyle, modifier = Modifier.semantics {
+                            onLongClick(str.selectValue) { selectValue(); true }
+                        }.pointerInput(Unit) {
+                            detectTapGestures(onLongPress = { selectValue() }, onDoubleTap = { selectValue() })
+                        })
+                    } else {
+                        Row(
+                            Modifier.fillMaxWidth().horizontalScroll(scroll),
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            layout.texts.forEach { drawText(textMeasurer, it.text, topLeft = Offset(it.x, it.y), style = dispStyle) }
-                            layout.bars.forEach { drawRect(fg, topLeft = Offset(it.x, it.y), size = Size(it.w, 1.5.dp.toPx())) }
-                            val cr = cursorRectOf(layout, editor)
-                            if (cr != null) {
-                                drawRect(fg.copy(alpha = cursorAlpha), topLeft = Offset(cr.left, cr.top), size = Size(2.dp.toPx(), cr.height))
+                            Canvas(
+                                Modifier
+                                    .size(with(density) { layout.width.toDp() }, with(density) { layout.height.toDp() })
+                                    .semantics {
+                                        contentDescription = expression
+                                        onLongClick(str.selectValue) { selectValue(); true }
+                                    }
+                                    .pointerInput(layout, rev, complete, gestureConfig) {
+                                        detectTapGestures(
+                                            onLongPress = { offset ->
+                                                previousTap = null
+                                                selectValue(tokenAt(layout, offset))
+                                            },
+                                            onTap = { offset ->
+                                                val now = SystemClock.uptimeMillis()
+                                                val lastTap = previousTap
+                                                val token = tokenAt(layout, offset)
+                                                if (lastTap != null && lastTap.revision == rev && lastTap.token === token &&
+                                                    now - lastTap.time <= gestureConfig.doubleTapTimeoutMillis &&
+                                                    (offset - lastTap.position).getDistance() <= gestureConfig.touchSlop * 2) {
+                                                    previousTap = null
+                                                    if (lastTap.wasResult) {
+                                                        editor.moveToEnd()
+                                                        resultRevision = rev
+                                                    }
+                                                    selectValue(token)
+                                                } else {
+                                                    // Place the caret immediately so the next keypad press uses this tap.
+                                                    hitTest(layout, editor, offset)
+                                                    revision++
+                                                    previousTap = DisplayTap(now, offset, revision, token, complete)
+                                                }
+                                            }
+                                        )
+                                    }
+                            ) {
+                                layout.texts.forEach { drawText(it.layout, topLeft = Offset(it.x, it.y)) }
+                                layout.bars.forEach { drawRect(displayColor, topLeft = Offset(it.x, it.y), size = Size(it.w, 1.5.dp.toPx())) }
+                                if (caret != null && blinkOn) {
+                                    val inset = caret.height * 0.13f
+                                    drawRoundRect(
+                                        displayColor, topLeft = Offset(caret.left, caret.top + inset),
+                                        size = Size(caret.width, caret.height - inset * 2),
+                                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(caret.width / 2f)
+                                    )
+                                }
                             }
                         }
                     }
@@ -1237,21 +1454,30 @@ fun CalculatorApp() {
             }
 
             Row {
-                GlassButton("AC", backdrop, Modifier.weight(2f).aspectRatio(2f), ::onClear, ::onParen, buttonSurface, fg, strongHaptic = true)
-                GlassButton("÷", backdrop, Modifier.weight(1f).aspectRatio(1f), { if (editor.inFraction()) onNextField() else onOperator("÷") }, { onFraction() }, buttonSurface, fg)
-                GlassButton("×", backdrop, Modifier.weight(1f).aspectRatio(1f), { onOperator("×") }, null, buttonSurface, fg)
+                GlassButton(
+                    "AC", backdrop, Modifier.weight(2f).aspectRatio(2f), ::onClear, ::onParen, buttonSurface, fg,
+                    strongHaptic = true, onClickLabel = str.clear, onLongClickLabel = str.insertParen
+                ) {
+                    BasicText(
+                        "AC",
+                        style = TextStyle(color = fg, fontFamily = CalculatorFont, fontSize = 22.sp, fontWeight = FontWeight.Medium),
+                        maxLines = 1, softWrap = false
+                    )
+                }
+                GlassButton("÷", backdrop, Modifier.weight(1f).aspectRatio(1f), { if (selectionDocument == null && editor.inFraction()) onNextField() else onOperator("÷") }, { onFraction() }, buttonSurface, fg, symbolLabel = str.divide)
+                GlassButton("×", backdrop, Modifier.weight(1f).aspectRatio(1f), { onOperator("×") }, null, buttonSurface, fg, symbolLabel = str.multiply)
             }
             Row {
                 GlassButton("7", backdrop, Modifier.weight(1f).aspectRatio(1f), { onDigit("7") }, null, buttonSurface, fg)
                 GlassButton("8", backdrop, Modifier.weight(1f).aspectRatio(1f), { onDigit("8") }, null, buttonSurface, fg)
                 GlassButton("9", backdrop, Modifier.weight(1f).aspectRatio(1f), { onDigit("9") }, null, buttonSurface, fg)
-                GlassButton("-", backdrop, Modifier.weight(1f).aspectRatio(1f), { onOperator("-") }, null, buttonSurface, fg)
+                GlassButton("-", backdrop, Modifier.weight(1f).aspectRatio(1f), { onOperator("-") }, null, buttonSurface, fg, symbolLabel = str.subtract)
             }
             Row {
                 GlassButton("4", backdrop, Modifier.weight(1f).aspectRatio(1f), { onDigit("4") }, null, buttonSurface, fg)
                 GlassButton("5", backdrop, Modifier.weight(1f).aspectRatio(1f), { onDigit("5") }, null, buttonSurface, fg)
                 GlassButton("6", backdrop, Modifier.weight(1f).aspectRatio(1f), { onDigit("6") }, null, buttonSurface, fg)
-                GlassButton("+", backdrop, Modifier.weight(1f).aspectRatio(1f), { onOperator("+") }, null, buttonSurface, fg)
+                GlassButton("+", backdrop, Modifier.weight(1f).aspectRatio(1f), { onOperator("+") }, null, buttonSurface, fg, symbolLabel = str.add)
             }
             Row {
                 Column(Modifier.weight(3f)) {
@@ -1263,10 +1489,13 @@ fun CalculatorApp() {
                     Row {
                         GlassButton("0", backdrop, Modifier.weight(1f).aspectRatio(1f), { onDigit("0") }, null, buttonSurface, fg)
                         GlassButton(".", backdrop, Modifier.weight(1f).aspectRatio(1f), ::onDot, null, buttonSurface, fg)
-                        GlassButton("⌫", backdrop, Modifier.weight(1f).aspectRatio(1f), ::onBackspace, null, buttonSurface, fg)
+                        GlassButton("⌫", backdrop, Modifier.weight(1f).aspectRatio(1f), ::onBackspace, null, buttonSurface, fg) {
+                            val iconSize = with(density) { Modifier.size(32.sp.toDp(), 24.sp.toDp()) }
+                            Image(rememberVectorPainter(BackspaceIcon), str.backspace, iconSize, colorFilter = ColorFilter.tint(fg))
+                        }
                     }
                 }
-                GlassButton("=", backdrop, Modifier.weight(1f).aspectRatio(0.5f), ::onEquals, ::toggleThemeByLongPress, buttonSurface, fg, strongHaptic = true)
+                GlassButton("=", backdrop, Modifier.weight(1f).aspectRatio(0.5f), ::onEquals, ::toggleThemeByLongPress, buttonSurface, fg, strongHaptic = true, symbolLabel = str.equalsLabel)
             }
         }
         Spacer(Modifier.matchParentSize().graphicsLayer().drawNeighborReflections(keypadLights, dark))
@@ -1568,31 +1797,23 @@ private fun OobeConfirmButton(backdrop: Backdrop, text: String, onClick: () -> U
 }
 
 @Composable
-private fun HistoryPill(history: List<HistoryItem>, fg: Color, dark: Boolean, copyLabel: String, onClear: () -> Unit, onUseResult: (String) -> Unit) {
+private fun HistoryButton(history: List<HistoryItem>, fg: Color, dark: Boolean, title: String, useResultLabel: String, onClear: () -> Unit, onUseResult: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
-    val widthFraction by animateFloatAsState(
-        targetValue = if (expanded) 0.92f else 0.5f,
-        animationSpec = spring(stiffness = 300f, dampingRatio = 0.8f)
-    )
 
-    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-        Box(
-            Modifier.fillMaxWidth(widthFraction).height(36.dp)
-                .clip(RoundedCornerShape(18.dp))
-                .background(Color.White.copy(alpha = 0.18f))
-                .combinedClickable(
-                    onClick = { expanded = !expanded },
-                    onDoubleClick = { onClear() }
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            val last = history.firstOrNull()
-            BasicText(
-                if (last != null) "${last.expr} = ${last.result}" else "",
-                style = TextStyle(color = fg, fontSize = 13.sp),
-                maxLines = 1
-            )
+    Row(
+        Modifier.height(44.dp).clip(RoundedCornerShape(22.dp))
+            .combinedClickable(role = Role.Button, onClick = { expanded = true }, onDoubleClick = onClear)
+            .padding(horizontal = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Canvas(Modifier.size(15.dp)) {
+            val stroke = 1.35.dp.toPx()
+            drawCircle(fg, radius = size.minDimension * 0.43f, style = Stroke(stroke))
+            drawLine(fg, center, Offset(center.x, size.height * 0.24f), stroke, StrokeCap.Round)
+            drawLine(fg, center, Offset(size.width * 0.69f, size.height * 0.59f), stroke, StrokeCap.Round)
         }
+        BasicText(title, style = TextStyle(color = fg, fontSize = 15.sp, fontWeight = FontWeight.Medium), maxLines = 1)
     }
 
     if (expanded) {
@@ -1618,7 +1839,7 @@ private fun HistoryPill(history: List<HistoryItem>, fg: Color, dark: Boolean, co
                                     expanded = false
                                 }.padding(horizontal = 8.dp, vertical = 4.dp)
                             ) {
-                                BasicText(copyLabel, style = TextStyle(color = Color(0xFF0A84FF), fontSize = 13.sp))
+                                BasicText(useResultLabel, style = TextStyle(color = Color(0xFF0A84FF), fontSize = 13.sp))
                             }
                         }
                     }
@@ -1715,6 +1936,33 @@ private fun DialogItem(text: String, isCancel: Boolean = false, onClick: () -> U
     }
 }
 
+private val CalculatorFont = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+    FontFamily(
+        Font(R.font.dm_sans),
+        Font(R.font.dm_sans, FontWeight.Medium, variationSettings = FontVariation.Settings(FontVariation.weight(500)))
+    )
+} else {
+    FontFamily(Font(R.font.dm_sans))
+}
+
+private val BackspaceIcon = ImageVector.Builder("Backspace", 32.dp, 24.dp, 32f, 24f).apply {
+    path(stroke = SolidColor(Color.Black), strokeLineWidth = 1.9f, strokeLineJoin = StrokeJoin.Round,
+        strokeLineCap = StrokeCap.Round) {
+        moveTo(11f, 2.3f)
+        lineTo(27f, 2.3f)
+        quadTo(30f, 2.3f, 30f, 5.3f)
+        lineTo(30f, 18.7f)
+        quadTo(30f, 21.7f, 27f, 21.7f)
+        lineTo(11f, 21.7f)
+        lineTo(2f, 12f)
+        close()
+        moveTo(15f, 8f)
+        lineTo(23f, 16f)
+        moveTo(23f, 8f)
+        lineTo(15f, 16f)
+    }
+}.build()
+
 @Composable
 fun GlassButton(
     text: String,
@@ -1724,7 +1972,11 @@ fun GlassButton(
     onLongClick: (() -> Unit)? = null,
     surfaceColor: Color = Color.White.copy(alpha = 0.05f),
     textColor: Color = Color.White,
-    strongHaptic: Boolean = false
+    strongHaptic: Boolean = false,
+    onClickLabel: String? = null,
+    onLongClickLabel: String? = null,
+    symbolLabel: String = text,
+    content: (@Composable () -> Unit)? = null
 ) {
     val haptic = LocalHapticFeedback.current
     val vibrationLevel = LocalVibrationLevel.current
@@ -1747,6 +1999,8 @@ fun GlassButton(
                 interactionSource = interactionSource,
                 indication = null,
                 role = Role.Button,
+                onClickLabel = onClickLabel,
+                onLongClickLabel = onLongClickLabel,
                 onClick = {
                     hapticType(vibrationLevel, strongHaptic)?.let { haptic.performHapticFeedback(it) }
                     onClick()
@@ -1756,13 +2010,41 @@ fun GlassButton(
         contentAlignment = Alignment.Center
     ) {
         GlassKeyFace(backdrop, surfaceColor, interactionSource, light)
-        BasicText(
-            text,
-            style = TextStyle(
-                color = textColor,
-                fontSize = if (text in listOf("÷", "×", "-", "+", "=")) 26.sp else 22.sp,
-                fontWeight = if (text in listOf("÷", "×", "-", "+", "=")) FontWeight.Bold else FontWeight.Normal
-            )
-        )
+        if (content != null) {
+            content()
+        } else {
+            val icon = when (text) {
+                "+" -> R.drawable.keypad_add
+                "-", "−" -> R.drawable.keypad_subtract
+                "×" -> R.drawable.keypad_multiply
+                "÷" -> R.drawable.keypad_divide
+                "=" -> R.drawable.keypad_equals
+                else -> null
+            }
+            if (icon != null) {
+                val tint = when {
+                    text != "=" -> textColor
+                    textColor == Color.White -> Color(0xFFB9DCFF)
+                    else -> Color(0xFF173F67)
+                }
+                Image(
+                    painter = painterResource(icon),
+                    contentDescription = symbolLabel,
+                    modifier = Modifier.size(with(LocalDensity.current) { 32.sp.toDp() }),
+                    colorFilter = ColorFilter.tint(tint)
+                )
+            } else {
+                val isNumber = text.length == 1 && (text[0].isDigit() || text == ".")
+                BasicText(
+                    text,
+                    style = TextStyle(
+                        color = textColor,
+                        fontFamily = if (isNumber) CalculatorFont else null,
+                        fontSize = if (isNumber) 32.sp else 29.sp
+                    ),
+                    maxLines = 1
+                )
+            }
+        }
     }
 }
