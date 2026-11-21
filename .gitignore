@@ -30,3 +30,6 @@ NetTest.class
 
 # 本机发布备忘（含凭证说明，切勿提交）
 DEV_NOTES.md
+
+# Gradle Wrapper（jar 必须提交，显式保留）
+!gradle/wrapper/gradle-wrapper.jar

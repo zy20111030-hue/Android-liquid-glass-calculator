@@ -2,8 +2,6 @@ package com.dshm.calc
 
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.interaction.InteractionSource
-import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.shape.AbsoluteRoundedCornerShape
@@ -12,6 +10,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
@@ -29,20 +28,23 @@ import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.mapNotNull
 import kotlin.math.abs
 
 private val KeyShape = AbsoluteRoundedCornerShape(50)
 private val PressIn = tween<Float>(72, easing = LinearOutSlowInEasing)
 private val QuickTap = tween<Float>(32, easing = LinearOutSlowInEasing)
 private val Release = tween<Float>(150)
-private val Cancel = tween<Float>(80)
+
+/* 按压强度参数（按下时变形更明显、折射更强） */
+private val PressBend = 4.6.dp        // 圆角弯折量
+private const val PressTravel = 3.4f  // 基础压缩（dp）
+private const val PressTravelAxis = 0.9f // 沿按压方向的额外压缩
+private const val PressShift = 1.5f   // 远离指尖的位移
 
 @Composable
 internal fun BoxScope.GlassKeyFace(
     backdrop: Backdrop,
     surfaceColor: Color,
-    interactions: InteractionSource,
     lightSource: KeyLightSource
 ) {
     val pressure = lightSource.pressure
@@ -63,7 +65,7 @@ internal fun BoxScope.GlassKeyFace(
         derivedStateOf {
             val size = lightSource.size
             val radius = with(density) { (minOf(size.width, size.height) * .5f).toDp() }
-            val bend = 2.8.dp * pressure.value
+            val bend = PressBend * pressure.value
             val (x, y) = direction
             if (bend == 0.dp || direction == Offset.Zero) KeyShape else AbsoluteRoundedCornerShape(
                 topLeft = (radius - bend * (x + y).coerceIn(0f, 1.5f)).coerceAtLeast(0.dp),
@@ -74,39 +76,15 @@ internal fun BoxScope.GlassKeyFace(
         }
     }
 
-    LaunchedEffect(interactions, lightSource) {
-        val held = mutableListOf<PressInteraction.Press>()
-        interactions.interactions.mapNotNull { event ->
-            when (event) {
-                is PressInteraction.Press -> {
-                    held.add(event)
-                    event
-                }
-                is PressInteraction.Release, is PressInteraction.Cancel -> {
-                    val ended = if (event is PressInteraction.Release) event.press
-                                else (event as PressInteraction.Cancel).press
-                    val wasLatest = ended === held.lastOrNull()
-                    held.remove(ended)
-                    if (wasLatest) held.lastOrNull() ?: event else null
-                }
-                else -> null
-            }
-        }.collectLatest { event ->
-            when (event) {
-                is PressInteraction.Press -> {
-                    lightSource.beginPress(event.pressPosition)
-                    pressure.animateTo(1f, PressIn)
-                }
-                is PressInteraction.Release -> {
-                    // A down/up pair can arrive in one frame. Let the light register on a quick tap.
-                    if (pressure.value < 0.52f) pressure.animateTo(0.52f, QuickTap)
-                    pressure.animateTo(0f, Release)
-                    lightSource.finishPress()
-                }
-                is PressInteraction.Cancel -> {
-                    pressure.animateTo(0f, Cancel)
-                    lightSource.finishPress()
-                }
+    LaunchedEffect(lightSource) {
+        // 按下状态由指针跟踪驱动：手指不抬起就一直保持按下，滑出键区也不会熄灭。
+        snapshotFlow { lightSource.isDown }.collectLatest { down ->
+            if (down) {
+                pressure.animateTo(1f, PressIn)
+            } else if (pressure.value > 0.01f) {
+                // A down/up pair can arrive in one frame. Let the light register on a quick tap.
+                if (pressure.value < 0.52f) pressure.animateTo(0.52f, QuickTap)
+                pressure.animateTo(0f, Release)
             }
         }
     }
@@ -120,18 +98,20 @@ internal fun BoxScope.GlassKeyFace(
                 effects = {
                     vibrancy()
                     blur(2.dp.toPx())
-                    lens(18.dp.toPx(), 30.dp.toPx())
+                    // 折射强度随按压力实时变化：按下越深，背景折射越强
+                    val p = pressure.value
+                    lens((18f + 20f * p).dp.toPx(), (30f + 28f * p).dp.toPx())
                 },
                 layerBlock = {
                     val unit = 1.dp.toPx() * pressure.value
                     val (x, y) = direction
-                    val travelX = (1.8f + 0.44f * abs(x)) * unit
-                    val travelY = (1.8f + 0.44f * abs(y)) * unit
+                    val travelX = (PressTravel + PressTravelAxis * abs(x)) * unit
+                    val travelY = (PressTravel + PressTravelAxis * abs(y)) * unit
                     scaleX = 1f - travelX / size.width.coerceAtLeast(1f)
                     scaleY = 1f - travelY / size.height.coerceAtLeast(1f)
                     // Shift the compressed face away from the fingertip so the far edge stays seated.
-                    translationX = -0.85f * x * unit
-                    translationY = -0.85f * y * unit
+                    translationX = -PressShift * x * unit
+                    translationY = -PressShift * y * unit
                 },
                 onDrawSurface = { drawRect(surfaceColor) }
             )
@@ -172,7 +152,7 @@ internal fun BoxScope.GlassKeyFace(
                     center = point,
                     radius = radius
                 )
-                val glowAlpha = if (dark) 0.19f else 0.27f
+                val glowAlpha = if (dark) 0.26f else 0.34f
                 onDrawBehind {
                     val strength = pressure.value
                     val shape = glassShape

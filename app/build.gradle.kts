@@ -20,8 +20,8 @@ android {
         applicationId = "com.dshm.calc"
         minSdk = 23
         targetSdk = 37
-        versionCode = 3
-        versionName = "3.0-release"
+        versionCode = 4
+        versionName = "3.1"
     }
 
     signingConfigs {

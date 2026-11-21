@@ -173,8 +173,6 @@ fun syncLauncherAlias(context: Context, lang: String) {
     }
 }
 
-private val MC = MathContext(12, RoundingMode.HALF_UP)
-
 private val DarkGradient = listOf(
     Color(0xFF16324F), Color(0xFF0A4D8C), Color(0xFF3A2E6E), Color(0xFF16324F)
 )
@@ -247,21 +245,21 @@ private val strings = mapOf(
     Lang.ZH_CN to Str(
         "计算器", "设置", "深色模式", "壁纸", "震动", "语言", "关于",
         "跟随系统", "壁纸取色", "无", "关闭", "标准", "增强", "取消",
-        "版本 V3.0-release", "确定", "更换壁纸需要「允许访问所有文件」权限", "去授权", "恢复默认", "关闭", "错误", "复制",
+        "版本 V3.1", "确定", "更换壁纸需要「允许访问所有文件」权限", "去授权", "恢复默认", "关闭", "错误", "复制",
         "历史", "退格", "清除", "插入括号", "加", "减", "乘", "除", "等于",
         "全选", "完成", "选择数字", "回填"
     ),
     Lang.ZH_TW to Str(
         "計算器", "設置", "深色模式", "桌布", "震動", "語言", "關於",
         "跟隨系統", "桌布取色", "無", "關閉", "標準", "增強", "取消",
-        "版本 V3.0-release", "確定", "更換桌布需要「允許存取所有檔案」權限", "去授權", "恢復預設", "關閉", "錯誤", "複製",
+        "版本 V3.1", "確定", "更換桌布需要「允許存取所有檔案」權限", "去授權", "恢復預設", "關閉", "錯誤", "複製",
         "歷史", "退格", "清除", "插入括號", "加", "減", "乘", "除", "等於",
         "全選", "完成", "選取數字", "帶入"
     ),
     Lang.EN to Str(
         "Calculator", "Settings", "Dark mode", "Wallpaper", "Vibration", "Language", "About",
         "Follow system", "Wallpaper color", "None", "Off", "Standard", "Enhanced", "Cancel",
-        "Version V3.0-release", "OK", "Changing wallpaper requires 'All files access' permission", "Grant", "Restore default", "Close", "Error", "Copy",
+        "Version V3.1", "OK", "Changing wallpaper requires 'All files access' permission", "Grant", "Restore default", "Close", "Error", "Copy",
         "History", "Backspace", "Clear", "Insert parentheses", "Plus", "Minus", "Multiply", "Divide", "Equals",
         "Select all", "Done", "Select number", "Use result"
     )
@@ -324,92 +322,6 @@ private fun deserializeHistory(s: String): List<HistoryItem> =
         if (idx > 0) HistoryItem(it.substring(0, idx), it.substring(idx + 1)) else null
     }
 
-private fun formatResult(v: Double): String {
-    if (v.isNaN() || v.isInfinite()) return "错误"
-    val bd = BigDecimal(v).setScale(10, RoundingMode.HALF_UP).stripTrailingZeros()
-    return if (bd.signum() == 0) "0" else bd.toPlainString()
-}
-
-private sealed class Tok
-private data class NumTok(val v: Double) : Tok()
-private data class OpTok(val op: Char) : Tok()
-
-private fun tokenize(s: String): List<Tok>? {
-    val tokens = mutableListOf<Tok>()
-    var i = 0
-    while (i < s.length) {
-        val c = s[i]
-        when {
-            c.isDigit() || c == '.' -> {
-                val start = i
-                while (i < s.length && (s[i].isDigit() || s[i] == '.')) i++
-                val num = s.substring(start, i).toDoubleOrNull() ?: return null
-                tokens.add(NumTok(num))
-            }
-            c == '+' || c == '-' || c == '×' || c == '÷' -> {
-                tokens.add(OpTok(c)); i++
-            }
-            else -> return null
-        }
-    }
-    return tokens
-}
-
-private fun evaluateExpression(s: String): Double? {
-    val tokens = tokenize(s) ?: return null
-    if (tokens.isEmpty()) return null
-    var i = 0
-    fun parseFactor(): Double? {
-        if (i >= tokens.size) return null
-        val t = tokens[i]
-        if (t is OpTok && (t.op == '-' || t.op == '+')) {
-            i++
-            val v = parseFactor() ?: return null
-            return if (t.op == '-') -v else v
-        }
-        if (t is NumTok) { i++; return t.v }
-        return null
-    }
-    fun parseTerm(): Double? {
-        var v = parseFactor() ?: return null
-        while (i < tokens.size && tokens[i] is OpTok) {
-            val op = (tokens[i] as OpTok).op
-            if (op != '×' && op != '÷') break
-            i++
-            val rhs = parseFactor() ?: return null
-            if (op == '÷' && rhs == 0.0) return null
-            v = if (op == '×') v * rhs else v / rhs
-        }
-        return v
-    }
-    fun parseExpr(): Double? {
-        var v = parseTerm() ?: return null
-        while (i < tokens.size && tokens[i] is OpTok) {
-            val op = (tokens[i] as OpTok).op
-            if (op != '+' && op != '-') break
-            i++
-            val rhs = parseTerm() ?: return null
-            v = if (op == '+') v + rhs else v - rhs
-        }
-        return v
-    }
-    val result = parseExpr()
-    return if (i == tokens.size) result else null
-}
-
-/* ===================== 堆叠分数模型 ===================== */
-
-sealed class FItem {
-    class Num(var text: String) : FItem()
-    class Op(val sym: String) : FItem()
-    class FracItem(
-        val num: MutableList<FItem> = mutableListOf(),
-        val den: MutableList<FItem> = mutableListOf()
-    ) : FItem()
-    class ParenItem(
-        val inner: MutableList<FItem> = mutableListOf()
-    ) : FItem()
-}
 
 data class ParenFrame(
     val parent: MutableList<FItem>,
@@ -603,89 +515,6 @@ class FracEditor {
     }
 }
 
-private class Ratio(val n: BigInteger, val d: BigInteger) {
-    companion object {
-        fun of(n: BigInteger, d: BigInteger): Ratio {
-            if (d.signum() == 0) throw ArithmeticException("div0")
-            var nn = n; var dd = d
-            if (dd.signum() < 0) { nn = nn.negate(); dd = dd.negate() }
-            val g = nn.gcd(dd)
-            if (g.signum() != 0 && g != BigInteger.ONE) { nn = nn.divide(g); dd = dd.divide(g) }
-            return Ratio(nn, dd)
-        }
-    }
-    fun plus(o: Ratio) = of(n.multiply(o.d).add(o.n.multiply(d)), d.multiply(o.d))
-    fun minus(o: Ratio) = of(n.multiply(o.d).subtract(o.n.multiply(d)), d.multiply(o.d))
-    fun times(o: Ratio) = of(n.multiply(o.n), d.multiply(o.d))
-    fun divide(o: Ratio) = of(n.multiply(o.d), d.multiply(o.n))
-    fun isInteger() = d == BigInteger.ONE
-    fun isZero() = n.signum() == 0
-}
-
-private fun textToRatio(s: String): Ratio? {
-    if (s.isEmpty() || s == ".") return null
-    val t = if (s.endsWith(".")) s.dropLast(1) else s
-    if (t.isEmpty() || t == "-") return null
-    val bd = t.toBigDecimalOrNull() ?: return null
-    val unscaled = bd.unscaledValue()
-    val scale = bd.scale()
-    val den = if (scale > 0) BigInteger.TEN.pow(scale) else BigInteger.ONE
-    val num = if (scale > 0) unscaled else unscaled.multiply(BigInteger.TEN.pow(-scale))
-    return try { Ratio.of(num, den) } catch (e: Exception) { null }
-}
-
-private fun evalSlot(items: List<FItem>): Ratio? {
-    var pos = 0
-    fun factor(): Ratio? {
-        if (pos >= items.size) return null
-        val it = items[pos]
-        if (it is FItem.Op && (it.sym == "-" || it.sym == "+")) {
-            pos++
-            val v = factor() ?: return null
-            return if (it.sym == "-") Ratio.of(v.n.negate(), v.d) else v
-        }
-        return when (it) {
-            is FItem.Num -> { pos++; textToRatio(it.text) }
-            is FItem.FracItem -> {
-                pos++
-                val num = evalSlot(it.num) ?: return null
-                val den = evalSlot(it.den) ?: return null
-                if (den.isZero()) null else try { num.divide(den) } catch (e: ArithmeticException) { null }
-            }
-            is FItem.ParenItem -> { pos++; evalSlot(it.inner) }
-            else -> null
-        }
-    }
-    fun term(): Ratio? {
-        var v = factor() ?: return null
-        while (pos < items.size) {
-            val it = items[pos]
-            if (it is FItem.Op && (it.sym == "×" || it.sym == "÷")) {
-                pos++
-                val r = factor() ?: return null
-                v = if (it.sym == "×") v.times(r) else { if (r.isZero()) return null; v.divide(r) }
-            } else break
-        }
-        return v
-    }
-    fun expr(): Ratio? {
-        var v = term() ?: return null
-        while (pos < items.size) {
-            val it = items[pos]
-            if (it is FItem.Op && (it.sym == "+" || it.sym == "-")) {
-                pos++
-                val r = term() ?: return null
-                v = if (it.sym == "+") v.plus(r) else v.minus(r)
-            } else break
-        }
-        return v
-    }
-    val r = expr()
-    return if (pos == items.size) r else null
-}
-
-private fun formatRatio(r: Ratio): String =
-    if (r.isInteger()) r.n.toString() else "${r.n}/${r.d}"
 
 /** 把历史结果字符串（整数或 a/b）还原成可编辑的表达式项 */
 private fun resultToItem(s: String): FItem {
@@ -875,14 +704,6 @@ private fun cursorRectOf(layout: LayoutResult, editor: FracEditor): Rect? {
     return Rect(x, slot.top, x + layout.caretWidth, slot.top + layout.lineHeight)
 }
 
-private fun exprText(items: List<FItem>): String = items.joinToString("") {
-    when (it) {
-        is FItem.Num -> it.text
-        is FItem.Op -> it.sym
-        is FItem.FracItem -> "(${exprText(it.num)})/(${exprText(it.den)})"
-        is FItem.ParenItem -> "(${exprText(it.inner)})"
-    }
-}
 
 private val binaryDisplayOperator = Regex("""(?<=[0-9)])([+×÷/\-])""")
 
@@ -1224,31 +1045,33 @@ fun CalculatorApp() {
     fun onEquals() {
         selectionDocument = null
         val text = exprText(editor.root)
-        val r = evalSlot(editor.root)
-        if (r != null) {
-            val formatted = formatRatio(r)
-            history.add(0, HistoryItem(text, formatted))
-            while (history.size > 10) history.removeAt(history.size - 1)
-            persistHistory()
-            editor.clear()
-            if (r.isInteger()) {
-                editor.root.add(FItem.Num(r.n.toString()))
-            } else {
-                editor.root.add(FItem.FracItem(
-                    num = mutableListOf(FItem.Num(r.n.toString())),
-                    den = mutableListOf(FItem.Num(r.d.toString()))
-                ))
+        when (val r = evaluate(editor.root)) {
+            is RationalResult.Ok -> {
+                evaluationFailed = false
+                history.add(0, HistoryItem(text, r.display()))
+                while (history.size > 10) history.removeAt(history.size - 1)
+                persistHistory()
+                editor.clear()
+                if (r.isInteger) {
+                    editor.root.add(FItem.Num(r.numerator.toString()))
+                } else {
+                    editor.root.add(FItem.FracItem(
+                        num = mutableListOf(FItem.Num(r.numerator.toString())),
+                        den = mutableListOf(FItem.Num(r.denominator.toString()))
+                    ))
+                }
+                editor.index = editor.root.size
+                editor.charOff = 0
             }
-            editor.index = editor.root.size
-            editor.charOff = 0
-        } else {
-            editor.clear()
-            editor.root.add(FItem.Num(str.error))
-            editor.index = 1
-            editor.charOff = 0
+            RationalResult.Error -> {
+                evaluationFailed = true
+                editor.clear()
+                editor.root.add(FItem.Num(str.error))
+                editor.index = 1
+                editor.charOff = 0
+            }
         }
         revision++
-        evaluationFailed = r == null
         resultRevision = revision
     }
 
@@ -2009,7 +1832,7 @@ fun GlassButton(
             ),
         contentAlignment = Alignment.Center
     ) {
-        GlassKeyFace(backdrop, surfaceColor, interactionSource, light)
+        GlassKeyFace(backdrop, surfaceColor, light)
         if (content != null) {
             content()
         } else {
@@ -2046,5 +1869,5 @@ fun GlassButton(
                 )
             }
         }
-    }
+}
 }

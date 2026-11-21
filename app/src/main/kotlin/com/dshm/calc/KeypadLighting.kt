@@ -42,6 +42,10 @@ internal class KeyLightSource(private val keypad: KeypadLights) {
         private set
     var bounds by mutableStateOf(Rect.Zero)
         private set
+
+    /** 手指是否仍按在屏幕上（滑出键区也算按下）。 */
+    var isDown by mutableStateOf(false)
+        private set
     private var pointerContact = Offset.Unspecified
 
     fun place(coordinates: LayoutCoordinates) {
@@ -64,31 +68,34 @@ internal class KeyLightSource(private val keypad: KeypadLights) {
     }
 
     fun beginPress(position: Offset) {
+        isDown = true
         localContact = if (pointerContact.isSpecified) pointerContact else position
         if (this !in keypad.emitters) keypad.emitters.add(this)
     }
 
     fun finishPress() {
+        isDown = false
         keypad.emitters.remove(this)
     }
 }
 
-// Observe motion in the fixed hit area. combinedClickable owns tap, long press and cancellation.
+// Observe motion in the fixed hit area. 按下状态由这里自己管理：只要手指没抬起，
+// 即使滑出按键范围也保持按下（位置夹取到边缘），不会像 combinedClickable 那样被判定为取消。
 internal fun Modifier.trackKeyContact(key: KeyLightSource): Modifier =
     onGloballyPositioned(key::place).pointerInput(key) {
         awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-            key.movePointer(down.position)
+            key.beginPress(down.position)
             try {
                 do {
                     val event = awaitPointerEvent(PointerEventPass.Initial)
                     val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                    val p = change.position
-                    if (!change.pressed || p.x < 0f || p.y < 0f || p.x > size.width || p.y > size.height) break
-                    key.movePointer(p)
+                    if (!change.pressed) break
+                    key.movePointer(change.position)
                 } while (true)
             } finally {
                 key.endPointer()
+                key.finishPress()
             }
         }
     }
