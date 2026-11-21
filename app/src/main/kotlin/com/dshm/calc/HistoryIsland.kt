@@ -142,6 +142,17 @@ internal fun HistoryIsland(
     val rows = history.size
     val contentH = PanelHeaderH + PanelRowH * rows.coerceAtLeast(1).toFloat() + PanelRowH + PanelPadV * 2f
     val targetH = contentH.coerceAtMost(maxPanelHeight)
+    val heightAnim = remember { androidx.compose.animation.core.Animatable(targetH.value) }
+    LaunchedEffect(targetH) {
+        heightAnim.animateTo(
+            targetH.value,
+            androidx.compose.animation.core.spring(
+                dampingRatio = 0.82f,
+                stiffness = 150f,
+                visibilityThreshold = 0.5f
+            )
+        )
+    }
 
     // 胶囊 → 圆 → 面板
     val circleP = 0.30f
@@ -156,7 +167,7 @@ internal fun HistoryIsland(
     } else {
         val t = (p - circleP) / (1f - circleP)
         w = lerpDp(IslandHeight, expandedWidth, t)
-        h = lerpDp(IslandHeight, targetH, t)
+        h = lerpDp(IslandHeight, heightAnim.value.dp, t)
         radius = lerpDp(IslandHeight / 2, 30.dp, t)
     }
     val shape: androidx.compose.ui.graphics.Shape = com.kyant.shapes.RoundedRectangle(
