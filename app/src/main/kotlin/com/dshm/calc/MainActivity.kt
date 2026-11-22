@@ -168,18 +168,29 @@ fun syncLauncherAlias(context: Context, lang: String) {
         else -> LAUNCHER_ALIASES[2]
     }
     val pm = context.packageManager
-    for (name in LAUNCHER_ALIASES) {
-        val desired = if (name == target) PackageManager.COMPONENT_ENABLED_STATE_ENABLED
-        else PackageManager.COMPONENT_ENABLED_STATE_DISABLED
-        try {
-            val cn = ComponentName(context, name)
-            if (pm.getComponentEnabledSetting(cn) != desired) {
-                pm.setComponentEnabledSetting(cn, desired, PackageManager.DONT_KILL_APP)
-            }
-        } catch (e: Exception) {
-            // ignore
+    // 1) 先启用目标别名（此时不动当前正在运行的别名）
+    try {
+        val cn = ComponentName(context, target)
+        if (pm.getComponentEnabledSetting(cn) != PackageManager.COMPONENT_ENABLED_STATE_ENABLED) {
+            pm.setComponentEnabledSetting(cn, PackageManager.COMPONENT_ENABLED_STATE_ENABLED, PackageManager.DONT_KILL_APP)
         }
+    } catch (e: Exception) {
+        // ignore
     }
+    // 2) 延迟禁用其他别名，避免刚切换语言时把正在运行的任务一并回收（表现为闪退）
+    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+        for (name in LAUNCHER_ALIASES) {
+            if (name == target) continue
+            try {
+                val cn = ComponentName(context, name)
+                if (pm.getComponentEnabledSetting(cn) != PackageManager.COMPONENT_ENABLED_STATE_DISABLED) {
+                    pm.setComponentEnabledSetting(cn, PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP)
+                }
+            } catch (e: Exception) {
+                // ignore
+            }
+        }
+    }, 800)
 }
 
 private val DarkGradient = listOf(
