@@ -168,7 +168,13 @@ fun syncLauncherAlias(context: Context, lang: String) {
         else -> LAUNCHER_ALIASES[2]
     }
     val pm = context.packageManager
-    // 1) 先启用目标别名（此时不动当前正在运行的别名）
+    // 当前正在承载任务的别名：本轮不去禁用，避免系统回收正在运行的任务（表现为闪退）
+    val baseAlias = try {
+        val am = context.getSystemService(android.app.ActivityManager::class.java)
+        am?.appTasks?.firstOrNull()?.taskInfo?.baseActivity?.className
+    } catch (e: Exception) {
+        null
+    }
     try {
         val cn = ComponentName(context, target)
         if (pm.getComponentEnabledSetting(cn) != PackageManager.COMPONENT_ENABLED_STATE_ENABLED) {
@@ -177,10 +183,10 @@ fun syncLauncherAlias(context: Context, lang: String) {
     } catch (e: Exception) {
         // ignore
     }
-    // 2) 延迟禁用其他别名，避免刚切换语言时把正在运行的任务一并回收（表现为闪退）
     android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
         for (name in LAUNCHER_ALIASES) {
             if (name == target) continue
+            if (baseAlias != null && name == baseAlias) continue
             try {
                 val cn = ComponentName(context, name)
                 if (pm.getComponentEnabledSetting(cn) != PackageManager.COMPONENT_ENABLED_STATE_DISABLED) {
@@ -190,7 +196,7 @@ fun syncLauncherAlias(context: Context, lang: String) {
                 // ignore
             }
         }
-    }, 800)
+    }, 1200)
 }
 
 private val DarkGradient = listOf(
@@ -299,14 +305,12 @@ private fun featureIntroFor(lang: Lang): FeatureIntro = when (lang) {
     Lang.ZH_CN -> FeatureIntro(
         "功能介绍",
         listOf(
-            "· 按住玻璃按键，触点一侧下压，旁边的键缘映出微光",
             "· 长按 ÷ 输入分数：先输分母再输分子，最多两层嵌套",
             "· 长按 AC 插入括号，用括号改变运算优先级",
-            "· 点按算式移动光标，长按数字或结果可选择、复制",
+            "· 点按算式移动光标；长按数字或结果可选择、复制",
             "· 算式按运算优先级精确计算，分数不丢精度",
             "· 顶部灵动岛常驻最近一次计算，点开可查看最近 10 条",
-            "· 长按右上角圆点展开液态玻璃菜单，上下滑动即可选择",
-            "· 设置子页也是玻璃质感，选中项会亮起蓝底",
+            "· 长按右上角圆点展开菜单，上下滑动即可选择",
             "· 按键形状可选圆角矩形或圆形",
             "· 深色/浅色主题、自定义壁纸、三档震动反馈"
         ),
@@ -315,14 +319,12 @@ private fun featureIntroFor(lang: Lang): FeatureIntro = when (lang) {
     Lang.ZH_TW -> FeatureIntro(
         "功能介紹",
         listOf(
-            "· 按住玻璃按鍵，觸點一側下壓，旁邊的鍵緣映出微光",
             "· 長按 ÷ 輸入分數：先輸分母再輸分子，最多兩層巢狀",
             "· 長按 AC 插入括號，用括號改變運算優先級",
-            "· 點按算式移動游標，長按數字或結果可選取、複製",
+            "· 點按算式移動游標；長按數字或結果可選取、複製",
             "· 算式按運算優先級精確計算，分數不丟精度",
             "· 頂部靈動島常駐最近一次計算，點開可查看最近 10 條",
-            "· 長按右上角圓點展開液態玻璃選單，上下滑動即可選擇",
-            "· 設定子頁同樣是玻璃質感，選取項目會亮起藍底",
+            "· 長按右上角圓點展開選單，上下滑動即可選擇",
             "· 按鍵形狀可選圓角矩形或圓形",
             "· 深色/淺色主題、自訂桌布、三檔震動回饋"
         ),
@@ -331,14 +333,12 @@ private fun featureIntroFor(lang: Lang): FeatureIntro = when (lang) {
     Lang.EN -> FeatureIntro(
         "Features",
         listOf(
-            "· Glass keys dip under your finger and light the edges of nearby keys",
             "· Long-press ÷ to enter a fraction (denominator first, up to 2 levels)",
             "· Long-press AC to insert parentheses for precedence control",
-            "· Tap to move the cursor. Hold a number or result to select and copy it",
-            "· Expressions are evaluated exactly with operator precedence, no precision loss",
-            "· The Dynamic Island at the top keeps your latest result; tap to open the last 10",
-            "· Long-press the dot at the top-right to open the glass menu, then slide to pick",
-            "· Settings sub-pages are glass too, with a blue highlight for the current choice",
+            "· Tap to move the cursor; hold a number or result to select and copy",
+            "· Expressions are evaluated exactly with operator precedence",
+            "· The Dynamic Island keeps your latest result; tap to open the last 10",
+            "· Long-press the dot at the top-right to open the menu, then slide to pick",
             "· Key shape can be rounded rectangle or circle",
             "· Dark/light theme, custom wallpaper, three-level haptic feedback"
         ),
