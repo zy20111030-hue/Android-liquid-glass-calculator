@@ -155,48 +155,17 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private val LAUNCHER_ALIASES = listOf(
-    "com.dshm.calc.LauncherZhCN",
-    "com.dshm.calc.LauncherZhTW",
-    "com.dshm.calc.LauncherEn"
-)
 
+/** 参考语言设置应用 App 级 Locale（Android 13+），启动器名称由资源本地化提供 */
 fun syncLauncherAlias(context: Context, lang: String) {
-    val target = when (lang) {
-        "zh-CN" -> LAUNCHER_ALIASES[0]
-        "zh-TW" -> LAUNCHER_ALIASES[1]
-        else -> LAUNCHER_ALIASES[2]
-    }
-    val pm = context.packageManager
-    // 当前正在承载任务的别名：本轮不去禁用，避免系统回收正在运行的任务（表现为闪退）
-    val baseAlias = try {
-        val am = context.getSystemService(android.app.ActivityManager::class.java)
-        am?.appTasks?.firstOrNull()?.taskInfo?.baseActivity?.className
-    } catch (e: Exception) {
-        null
-    }
-    try {
-        val cn = ComponentName(context, target)
-        if (pm.getComponentEnabledSetting(cn) != PackageManager.COMPONENT_ENABLED_STATE_ENABLED) {
-            pm.setComponentEnabledSetting(cn, PackageManager.COMPONENT_ENABLED_STATE_ENABLED, PackageManager.DONT_KILL_APP)
+    if (Build.VERSION.SDK_INT >= 33) {
+        try {
+            val lm = context.getSystemService(android.app.LocaleManager::class.java)
+            lm?.applicationLocales = android.os.LocaleList.forLanguageTags(lang)
+        } catch (e: Exception) {
+            // ignore
         }
-    } catch (e: Exception) {
-        // ignore
     }
-    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-        for (name in LAUNCHER_ALIASES) {
-            if (name == target) continue
-            if (baseAlias != null && name == baseAlias) continue
-            try {
-                val cn = ComponentName(context, name)
-                if (pm.getComponentEnabledSetting(cn) != PackageManager.COMPONENT_ENABLED_STATE_DISABLED) {
-                    pm.setComponentEnabledSetting(cn, PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP)
-                }
-            } catch (e: Exception) {
-                // ignore
-            }
-        }
-    }, 1200)
 }
 
 private val DarkGradient = listOf(

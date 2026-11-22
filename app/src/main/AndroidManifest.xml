@@ -4,46 +4,16 @@
 
     <application
         android:icon="@mipmap/ic_launcher"
-        android:label="计算器"
+        android:label="@string/app_name"
         android:theme="@android:style/Theme.Material.NoActionBar">
         <activity
             android:name=".MainActivity"
-            android:exported="true" />
-
-        <activity-alias
-            android:name=".LauncherZhCN"
-            android:targetActivity=".MainActivity"
-            android:label="计算器"
-            android:enabled="true"
-            android:exported="true">
+            android:exported="true"
+            android:label="@string/app_name">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-        </activity-alias>
-
-        <activity-alias
-            android:name=".LauncherZhTW"
-            android:targetActivity=".MainActivity"
-            android:label="計算器"
-            android:enabled="false"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity-alias>
-
-        <activity-alias
-            android:name=".LauncherEn"
-            android:targetActivity=".MainActivity"
-            android:label="Calculator"
-            android:enabled="false"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity-alias>
+        </activity>
     </application>
 </manifest>
