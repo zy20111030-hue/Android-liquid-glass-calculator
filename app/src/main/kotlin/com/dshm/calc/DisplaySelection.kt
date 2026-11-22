@@ -6,13 +6,20 @@ import android.content.Context
 import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.sizeIn
@@ -43,6 +50,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
@@ -76,7 +84,8 @@ internal fun DisplaySelection(
     copyLabel: String,
     selectAllLabel: String,
     doneLabel: String,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    interactive: Boolean
 ) {
     val range = selection.coerceIn(0, text.length)
     val field = remember(text) { TextFieldState(text, range) }
@@ -86,7 +95,7 @@ internal fun DisplaySelection(
     val reportRange by rememberUpdatedState(onSelectionChange)
     val context = LocalContext.current
 
-    LaunchedEffect(field) { focus.requestFocus() }
+    LaunchedEffect(field, interactive) { if (interactive) focus.requestFocus() }
     LaunchedEffect(field, range) {
         if (field.selection != range) field.edit { this.selection = range }
     }
@@ -117,21 +126,26 @@ internal fun DisplaySelection(
         val accent = if (darkSurface) Color(0xFF9DCCFF) else Color(0xFF1766AE)
         TextSelectionColors(accent, accent.copy(alpha = 0.36f))
     }
+    val actionsReveal = remember { Animatable(0f) }
+    LaunchedEffect(actionsReveal) { actionsReveal.animateTo(1f, tween(140, easing = LinearOutSlowInEasing)) }
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
         Row(
-            Modifier.clip(RoundedCornerShape(16.dp)).background(toolbarColor)
+            Modifier.graphicsLayer {
+                alpha = actionsReveal.value
+                translationY = (1f - actionsReveal.value) * 4.dp.toPx()
+            }.clip(RoundedCornerShape(16.dp)).background(toolbarColor)
                 .horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp),
             horizontalArrangement = Arrangement.End,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            SelectionAction(copyLabel, toolbarInk, enabled = !active.collapsed) { copySelection() }
-            SelectionAction(selectAllLabel, toolbarInk, enabled = text.isNotEmpty()) {
+            SelectionAction(copyLabel, toolbarInk, enabled = interactive && !active.collapsed) { copySelection() }
+            SelectionAction(selectAllLabel, toolbarInk, enabled = interactive && text.isNotEmpty()) {
                 val all = TextRange(0, text.length)
                 focus.requestFocus()
                 field.edit { this.selection = all }
                 onSelectionChange(all)
             }
-            SelectionAction(doneLabel, toolbarInk, onClick = onDismiss)
+            SelectionAction(doneLabel, toolbarInk, enabled = interactive, onClick = onDismiss)
         }
         CompositionLocalProvider(
             LocalTextContextMenuToolbarProvider provides InlineSelectionToolbar,
@@ -147,7 +161,7 @@ internal fun DisplaySelection(
                         focused = it.isFocused
                     }
                     .onPreviewKeyEvent {
-                        it.type == KeyEventType.KeyDown && it.isCtrlPressed && it.key == Key.C && copySelection()
+                        interactive && it.type == KeyEventType.KeyDown && it.isCtrlPressed && it.key == Key.C && copySelection()
                     }
                     .semantics {
                         if (!active.collapsed) copyText(label = copyLabel) { copySelection() }
@@ -158,18 +172,29 @@ internal fun DisplaySelection(
             )
         }
     }
-    BackHandler(onBack = onDismiss)
+    BackHandler(enabled = interactive, onBack = onDismiss)
 }
 
 @Composable
 private fun SelectionAction(label: String, color: Color, enabled: Boolean = true, onClick: () -> Unit) {
+    val source = remember { MutableInteractionSource() }
+    val motion = rememberGlassPressMotion(source)
+    val focused by source.collectIsFocusedAsState()
+    val shape = RoundedCornerShape(12.dp)
     Box(
-        Modifier.clickable(enabled = enabled, role = Role.Button, onClick = onClick)
-            .sizeIn(minWidth = 48.dp, minHeight = 48.dp).padding(horizontal = 10.dp),
+        Modifier.clickable(enabled = enabled, role = Role.Button, indication = null, interactionSource = source, onClick = onClick)
+            .sizeIn(minWidth = 48.dp, minHeight = 48.dp),
         contentAlignment = Alignment.Center
     ) {
+        if (motion.active || focused) {
+            Spacer(Modifier.matchParentSize().padding(2.dp).graphicsLayer {
+                applyGlassPress(motion.deformation, glassPressDirection(motion.contact, size.width, size.height))
+                alpha = if (focused) 1f else motion.pressure
+            }.background(color.copy(alpha = 0.12f), shape)
+                .then(if (focused) Modifier.border(1.dp, color, shape) else Modifier))
+        }
         BasicText(
-            label, style = TextStyle(color = if (enabled) color else color.copy(alpha = 0.5f), fontSize = 14.sp),
+            label, Modifier.padding(horizontal = 10.dp), style = TextStyle(color = if (enabled) color else color.copy(alpha = 0.5f), fontSize = 14.sp),
             maxLines = 1, softWrap = false
         )
     }

@@ -1,276 +1,517 @@
 package com.dshm.calc
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
-import kotlinx.coroutines.withTimeoutOrNull
 
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.Transition
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.clickable
-
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.border
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
-import kotlinx.coroutines.withTimeoutOrNull
-import androidx.compose.foundation.layout.BoxScope
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.compose.foundation.lazy.grid.LazyGridItemInfo
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.GenericShape
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur as blurModifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
-import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.ClipOp
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathOperation
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.drawOutline
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.addOutline
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.dismiss
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.onLongClick
+import androidx.compose.ui.semantics.paneTitle
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.kyant.backdrop.Backdrop
-import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
-import com.kyant.backdrop.effects.blur
+import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.lens
-import com.kyant.backdrop.effects.vibrancy
 import com.kyant.shapes.RoundedCornerStyle
 import com.kyant.shapes.RoundedRectangle
+import kotlin.math.roundToInt
+import kotlin.math.sin
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 
-private fun menuLerp(a: Dp, b: Dp, t: Float): Dp = a + (b - a) * t.coerceIn(0f, 1f)
+internal data class GlassMenuItem(val action: CalculatorOverlay, val label: String)
 
-/**
- * 三点菜单：收缩态是 44dp 液态玻璃圆点，点击后弹簧放大成玻璃面板（右上角锚定）。
- */
+/** Pointer positions stay in the stationary trigger until projected into the current list viewport. */
+private class MenuDrag(private val list: LazyGridState, private val insetX: Float, private val insetY: Float) {
+    var anchor by mutableStateOf<LayoutCoordinates?>(null)
+    var viewport by mutableStateOf<LayoutCoordinates?>(null)
+    var point by mutableStateOf<Offset?>(null)
+    var visibleArea by mutableStateOf<Rect?>(null)
+    var active by mutableStateOf(false)
+    private var hovered: CalculatorOverlay? = null
+
+    private fun localPoint(): Offset? {
+        val from = anchor?.takeIf { it.isAttached } ?: return null
+        val to = viewport?.takeIf { it.isAttached } ?: return null
+        val local = to.localPositionOf(from, point ?: return null)
+        return local.takeIf { it.x >= 0 && it.x < to.size.width && it.y >= 0 && it.y < to.size.height &&
+            visibleArea?.contains(it) != false }
+    }
+
+    private fun itemAt(local: Offset): LazyGridItemInfo? {
+        val layout = list.layoutInfo
+        val y = local.y + layout.viewportStartOffset
+        // Vertical grid items expose physical horizontal offsets, including RTL placement.
+        return layout.visibleItemsInfo.firstOrNull { item ->
+            local.x >= item.offset.x && local.x < item.offset.x + item.size.width &&
+                y >= item.offset.y && y < item.offset.y + item.size.height
+        }?.takeIf { it.key is CalculatorOverlay }
+    }
+
+    fun actionAtPointer() = localPoint()?.let(::itemAt)?.key as? CalculatorOverlay
+
+    fun target(): Pair<CalculatorOverlay, Rect>? {
+        val local = localPoint() ?: return null
+        val item = itemAt(local) ?: return null
+        val x = item.offset.x.toFloat()
+        val y = (item.offset.y - list.layoutInfo.viewportStartOffset).toFloat()
+        val width = item.size.width.toFloat()
+        val height = item.size.height.toFloat()
+        val dx = ((local.x - x - width / 2f) * 0.035f).coerceIn(-insetX, insetX)
+        val dy = ((local.y - y - height / 2f) * 0.12f).coerceIn(-insetY, insetY)
+        return item.key as CalculatorOverlay to Rect(x + insetX + dx, y + insetY + dy,
+            x + width - insetX + dx, y + height - insetY + dy)
+    }
+
+    fun updateHover(next: CalculatorOverlay?, haptic: () -> Unit) {
+        if (next != hovered) {
+            hovered = next
+            if (next != null) haptic()
+        }
+    }
+
+    fun edgeScrollFraction(edgeSize: Float): Float {
+        val y = localPoint()?.y ?: return 0f
+        val height = viewport?.size?.height?.toFloat() ?: return 0f
+        val band = minOf(edgeSize, height / 4f)
+        return when {
+            band <= 0f -> 0f
+            y < band && list.canScrollBackward -> (y - band) / band
+            y > height - band && list.canScrollForward -> (y - height + band) / band
+            else -> 0f
+        }
+    }
+
+    fun finish() {
+        active = false
+        point = null
+        hovered = null
+    }
+}
+
+@Composable
+private fun MenuSelectionLens(source: Backdrop, bounds: () -> Rect, shape: Shape, dark: Boolean) {
+    val rim = remember(dark) { Brush.linearGradient(listOf(
+        Color.White.copy(alpha = if (dark) 0.53f else 0.90f),
+        Color.White.copy(alpha = 0.12f), Color(0xFF657D99).copy(alpha = 0.48f)
+    )) }
+    Box(Modifier.layout { measurable, constraints ->
+        val rect = bounds()
+        if (rect.isEmpty) {
+            layout(constraints.maxWidth, constraints.maxHeight) {}
+        } else {
+            val width = rect.width.roundToInt().coerceAtLeast(1)
+            val height = rect.height.roundToInt().coerceAtLeast(1)
+            val glass = measurable.measure(Constraints.fixed(width, height))
+            layout(constraints.maxWidth, constraints.maxHeight) {
+                glass.place(rect.left.roundToInt(), rect.top.roundToInt())
+            }
+        }
+    }.drawBackdrop(backdrop = source, shape = { shape }, highlight = null,
+        effects = { lens(10.dp.toPx(), 7.dp.toPx()) },
+        onDrawSurface = { drawRect(if (dark) Color.White.copy(alpha = 0.09f) else Color(0xFF405977).copy(alpha = 0.08f)) })
+        .border(1.dp, rim, shape))
+}
+
+// Zero velocity and acceleration at each seam keep the outward and return paths reversible.
+private fun menuPhase(progress: Float, start: Float, end: Float): Float {
+    val t = ((progress - start) / (end - start)).coerceIn(0f, 1f)
+    return t * t * t * (10f + t * (6f * t - 15f))
+}
+
+/** The glass is measured at its live size. Both the real backdrop and the content clip use this frame. */
+internal fun menuFrame(
+    width: Float, height: Float, face: Float, inset: Float, travel: Float,
+    progress: Float, direction: LayoutDirection
+): Rect {
+    // Clear the history pill's 40 dp toolbar band before borrowing horizontal space.
+    val drop = menuPhase(progress, 0f, 0.38f)
+    val wide = menuPhase(progress, 0.28f, 1f)
+    val tall = 0.035f * drop + 0.965f * menuPhase(progress, 0.21f, 1f)
+    val w = face + (width - face) * wide
+    val h = face + (height - face) * tall
+    val endInset = inset * (1f - wide)
+    val x = if (direction == LayoutDirection.Ltr) width - w - endInset else endInset
+    val y = (inset - travel) * (1f - drop)
+    return Rect(x, y, x + w, y + h)
+}
+
+private fun Modifier.menuLabelReveal(progress: Float, start: Float): Modifier {
+    val reveal = ((progress - start) / (1f - start).coerceAtMost(0.33f)).coerceIn(0f, 1f)
+    if (reveal == 1f) return this
+    if (reveal == 0f) return graphicsLayer { alpha = 0f }
+    return graphicsLayer {
+        alpha = reveal
+        translationY = -4.dp.toPx() * (1f - reveal)
+    }
+}
+
 @Composable
 internal fun GlassMenu(
-    visible: Boolean,
-    backdrop: Backdrop,
-    surfaceColor: Color,
-    targetWidth: Dp,
-    targetHeight: Dp,
-    onToggle: () -> Unit,
-    itemCount: Int = 0,
-    itemHeight: Dp = 54.dp,
-    headerHeight: Dp = 54.dp,
-    onSelect: (Int) -> Unit = {},
-    onHoverChange: (Int) -> Unit = {},
-    modifier: Modifier = Modifier,
-    content: @Composable ColumnScope.() -> Unit
+    visibility: Transition<Boolean>, backdrop: Backdrop, dark: Boolean, title: String, closeLabel: String,
+    items: List<GlassMenuItem>, triggerAlpha: Float, triggerEnabled: Boolean, onExpandedChange: (Boolean) -> Unit, onSelect: (CalculatorOverlay) -> Unit,
+    onDragHaptic: () -> Unit, modifier: Modifier = Modifier
 ) {
-    val menuBackdrop = rememberLayerBackdrop()
-    val progress = remember { Animatable(0f) }
-    LaunchedEffect(visible) {
-        progress.animateTo(
-            targetValue = if (visible) 1f else 0f,
-            animationSpec = if (visible) {
-                androidx.compose.animation.core.tween(
-                    durationMillis = 480,
-                    easing = androidx.compose.animation.core.CubicBezierEasing(0.22f, 1f, 0.24f, 1f)
-                )
-            } else {
-                androidx.compose.animation.core.tween(
-                    durationMillis = 320,
-                    easing = androidx.compose.animation.core.CubicBezierEasing(0.4f, 0f, 0.2f, 1f)
-                )
-            }
-        )
+    val expanded = visibility.targetState
+    val list = rememberLazyGridState()
+    val density = LocalDensity.current
+    val drag = remember(list, density) { with(density) { MenuDrag(list, 5.dp.toPx(), 2.dp.toPx()) } }
+    val lensBounds = remember(drag) { Animatable(Rect.Zero, Rect.VectorConverter) }
+    val lensShape = remember { RoundedRectangle(18.dp, RoundedCornerStyle.Continuous) }
+    val currentExpanded by rememberUpdatedState(expanded)
+    val changeExpanded by rememberUpdatedState(onExpandedChange)
+    val haptic by rememberUpdatedState(onDragHaptic)
+    val select by rememberUpdatedState(onSelect)
+    val foreground = overlayInk(dark)
+    var keyPressed by remember { mutableStateOf(false) }
+    var contact by remember { mutableStateOf(Offset(0.5f, 0.5f)) }
+    var focused by remember { mutableStateOf(false) }
+    val press = rememberGlassPressMotion()
+    val pressure = press.pressure
+    val direction = Offset(contact.x * 2f - 1f, contact.y * 2f - 1f)
+    val progress by visibility.animateFloat(transitionSpec = {
+        if (targetState) tween(390, easing = CubicBezierEasing(0.23f, 0.72f, 0.21f, 1f))
+        else tween(280, easing = CubicBezierEasing(0.34f, 0.08f, 0.36f, 1f))
+    }, label = "Menu glass morph") { if (it) 1f else 0f }
+    LaunchedEffect(expanded) {
+        if (expanded) list.scrollToItem(0)
     }
-    val p = progress.value
-
-    val w = menuLerp(44.dp, targetWidth, p)
-    val h = menuLerp(44.dp, targetHeight, p)
-    val radius = menuLerp(22.dp, 26.dp, p)
-    val shape: Shape = RoundedRectangle(radius, RoundedCornerStyle.Continuous)
-    val contentAlpha = ((p - 0.4f) / 0.6f).coerceIn(0f, 1f)
-    val iconAlpha = (1f - p / 0.5f).coerceIn(0f, 1f)
-    val morphBlur = (kotlin.math.sin(p * Math.PI).toFloat() * 9f).dp
-    val visibleState = androidx.compose.runtime.rememberUpdatedState(visible)
-    var hoverY by remember { androidx.compose.runtime.mutableStateOf(-1f) }
-    val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
-    val pressAnim = remember { Animatable(0f) }
-    LaunchedEffect(pressed) { pressAnim.animateTo(if (pressed) 1f else 0f, androidx.compose.animation.core.tween(90)) }
-
-    Box(
-        modifier
-            .width(w)
-            .height(h)
-            .offset(y = 56.dp * p)
-            .blurModifier(morphBlur, edgeTreatment = androidx.compose.ui.draw.BlurredEdgeTreatment.Unbounded)
-            .graphicsLayer {
-                val s = 1f - 0.06f * pressAnim.value
-                scaleX = s
-                scaleY = s
+    LaunchedEffect(triggerEnabled) {
+        if (!triggerEnabled) {
+            keyPressed = false
+            focused = false
+            press.cancel()
+            drag.finish()
+        }
+    }
+    LaunchedEffect(drag.active, expanded, density) {
+        if (!drag.active || !expanded) {
+            lensBounds.snapTo(Rect.Zero)
+            return@LaunchedEffect
+        }
+        val edge = with(density) { 38.dp.toPx() }
+        val speed = with(density) { 360.dp.toPx() }
+        launch {
+            snapshotFlow { drag.target() }.collectLatest { target ->
+                drag.updateHover(target?.first, haptic)
+                val bounds = target?.second ?: Rect.Zero
+                if (bounds.isEmpty || lensBounds.value.isEmpty) lensBounds.snapTo(bounds)
+                else lensBounds.animateTo(bounds, spring(dampingRatio = 1f, stiffness = 760f,
+                    visibilityThreshold = Rect(0.5f, 0.5f, 0.5f, 0.5f)))
             }
-            .drawBackdrop(
-                backdrop = backdrop,
-                shape = { shape },
-                highlight = null,
-                effects = {
-                    vibrancy()
-                    blur(2.dp.toPx())
-                    lens((16f + 12f * p).dp.toPx(), (24f + 14f * p).dp.toPx())
-                },
-                layerBlock = {},
-                onDrawSurface = { drawRect(surfaceColor.copy(alpha = surfaceColor.alpha * (1f - 0.85f * p))) }
-            )
-            .drawWithCache {
-                val outline = shape.createOutline(size, layoutDirection, this)
-                val rim = Brush.linearGradient(
-                    0f to Color.White.copy(alpha = 0.55f),
-                    0.35f to Color.White.copy(alpha = 0.22f),
-                    0.7f to Color.Transparent,
-                    1f to Color.White.copy(alpha = 0.30f),
-                    end = Offset(size.width, size.height)
-                )
-                val bevel = Brush.linearGradient(
-                    0f to Color(0xFF172338).copy(alpha = 0.16f),
-                    0.5f to Color.Transparent,
-                    1f to Color(0xFF172338).copy(alpha = 0.22f),
-                    end = Offset(size.width, size.height)
-                )
-                onDrawBehind {
-                    drawOutline(outline, bevel, style = Stroke(3.4.dp.toPx()))
-                    drawOutline(outline, rim, style = Stroke(1.7.dp.toPx()))
-                    val glowStrength = pressAnim.value
-                    if (glowStrength > 0f) {
-                        val glow = Brush.radialGradient(
-                            0f to Color.White,
-                            0.45f to Color.White.copy(alpha = 0.46f),
-                            1f to Color.White.copy(alpha = 0f),
-                            center = Offset(size.width / 2f, size.height / 2f),
-                            radius = size.minDimension * 0.82f
-                        )
-                        drawRect(glow, alpha = 0.35f * glowStrength)
-                        drawOutline(outline, glow, alpha = 0.8f * glowStrength, style = Stroke(1.7.dp.toPx()))
+        }
+        // A stationary finger in the middle of the grid does not request display frames.
+        snapshotFlow { drag.edgeScrollFraction(edge) != 0f }.collectLatest { scrolling ->
+            if (scrolling) {
+                var previous = withFrameNanos { it }
+                while (drag.active) {
+                    val now = withFrameNanos { it }
+                    val fraction = drag.edgeScrollFraction(edge)
+                    if (fraction == 0f) break
+                    list.scrollBy(fraction * speed * ((now - previous) / 1_000_000_000f).coerceIn(0f, 0.05f))
+                    previous = now
+                }
+            }
+        }
+    }
+
+    BoxWithConstraints(modifier, contentAlignment = Alignment.TopEnd) {
+        val endMargin = ToolbarEdge
+        val topMargin = ToolbarTop
+        val triggerSize = ToolbarTouch
+        val panelTop = topMargin + triggerSize + 4.dp
+        val availableWidth = (maxWidth - endMargin * 2).coerceAtLeast(1.dp)
+        val panelMaxHeight = (maxHeight - panelTop - 8.dp).coerceAtLeast(1.dp)
+        val labelStyle = TextStyle(color = foreground, fontSize = 16.sp)
+        val titleStyle = TextStyle(color = foreground, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        val columns = if (maxWidth <= maxHeight || availableWidth < 336.dp) 1 else {
+            val measurer = rememberTextMeasurer()
+            // Check the single-column layout with the current language and accessibility font size.
+            val naturalHeight = remember(measurer, items, title, labelStyle, titleStyle, density) {
+                with(density) {
+                    val textWidth = Constraints(maxWidth = (252.dp - 36.dp).roundToPx())
+                    val header = measurer.measure(title, titleStyle, constraints = textWidth).size.height + 20.dp.roundToPx()
+                    val rows = items.sumOf { item ->
+                        val textHeight = measurer.measure(item.label, labelStyle, constraints = textWidth).size.height
+                        maxOf(48.dp.roundToPx(), textHeight + 16.dp.roundToPx())
+                    }
+                    (12.dp.roundToPx() + header + rows).toDp()
+                }
+            }
+            if (panelMaxHeight < naturalHeight) 2 else 1
+        }
+        val panelWidth = minOf(availableWidth, if (columns == 2) 440.dp else 252.dp)
+        if (visibility.currentState || visibility.targetState || progress > 0f) {
+            val p = progress.coerceIn(0f, 1f)
+            val pulse = if (p > 0f && p < 1f) sin(Math.PI * p).toFloat() else 0f
+            val travel = panelTop - topMargin
+            val face = with(density) { ToolbarFace.toPx() }
+            val inset = with(density) { (triggerSize - ToolbarFace).toPx() / 2f }
+            val travelPx = with(density) { travel.toPx() }
+            val radius = (ToolbarFace / 2) * (1f - p) + 22.dp * p + 5.dp * pulse
+            val surfaceShape = RoundedRectangle(radius, RoundedCornerStyle.Continuous)
+            val clipShape = if (p == 1f) surfaceShape else GenericShape { size, direction ->
+                val bounds = menuFrame(size.width, size.height, face, inset, travelPx, p, direction)
+                addRoundRect(RoundRect(bounds, CornerRadius(with(density) { radius.toPx() })))
+            }
+            val material = rememberPressableGlassMaterial()
+            val menuSource = if (drag.active) rememberLayerBackdrop() else null
+            Box(Modifier.padding(top = topMargin, end = endMargin)) {
+                // Record the complete grid first. Replace its normal pixels under the lens so a
+                // refracted letter cannot show a second, unbent copy of itself underneath.
+                val recordedPanel = if (menuSource == null) Modifier else Modifier.drawWithCache {
+                    val lens = lensBounds.value
+                    val mask = if (lens.isEmpty) null else {
+                        val ellipse = Path().apply {
+                            addOutline(lensShape.createOutline(lens.size, layoutDirection, this@drawWithCache))
+                            translate(Offset(lens.left, lens.top + travelPx))
+                        }
+                        val viewport = Path().apply {
+                            val gridSize = Size(size.width, (size.height - travelPx).coerceAtLeast(0f))
+                            addOutline(clipShape.createOutline(gridSize, layoutDirection, this@drawWithCache))
+                            translate(Offset(0f, travelPx))
+                        }
+                        Path.combine(PathOperation.Intersect, viewport, ellipse)
+                    }
+                    onDrawWithContent {
+                        if (mask == null) drawContent() else clipPath(mask, ClipOp.Difference) { this@onDrawWithContent.drawContent() }
+                    }
+                }.layerBackdrop(menuSource)
+                Box(recordedPanel) {
+                    // The grid determines the final dimensions once. Only the glass changes size;
+                    // its refraction samples the scene at the current outline, without scaling a snapshot.
+                    Box(Modifier.matchParentSize().layout { measurable, constraints ->
+                        val w = constraints.maxWidth
+                        val h = constraints.maxHeight
+                        val frame = menuFrame(w.toFloat(), h - travelPx, face, inset, travelPx, p, layoutDirection)
+                        drag.visibleArea = frame
+                        val glass = measurable.measure(Constraints.fixed(frame.width.roundToInt().coerceAtLeast(1),
+                            frame.height.roundToInt().coerceAtLeast(1)))
+                        layout(w, h) { glass.place(frame.left.roundToInt(), (travelPx + frame.top).roundToInt()) }
+                    }.graphicsLayer {
+                        alpha = menuPhase(p, 0f, 0.14f)
+                        applyGlassPress(press.deformation * (1f - p), direction)
+                    }
+                        .motionBlur((4f * pulse * menuPhase(p, 0.26f, 0.50f)).dp)
+                        .overlayGlass(backdrop, surfaceShape, dark, (2f + 6f * p).dp, (9f + 5f * p).dp,
+                            (13f + 6f * p + 5f * pulse).dp, exportedBackdrop = material.exportedBackdrop))
+                    Box(Modifier.padding(top = travel)) {
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(columns),
+                            modifier = Modifier.width(panelWidth).heightIn(max = panelMaxHeight)
+                                .clip(clipShape)
+                                .onGloballyPositioned { drag.viewport = it }
+                                .then(if (expanded) Modifier.semantics {
+                                    paneTitle = title
+                                    dismiss(closeLabel) { changeExpanded(false); true }
+                                } else Modifier.clearAndSetSemantics {}),
+                            state = list,
+                            userScrollEnabled = expanded,
+                            contentPadding = PaddingValues(vertical = 6.dp)
+                        ) {
+                            item(key = "menu-title", span = { GridItemSpan(maxLineSpan) }) {
+                                BasicText(title, Modifier.padding(horizontal = 18.dp, vertical = 10.dp)
+                                    .semantics { heading() }.menuLabelReveal(p, 0.25f), style = titleStyle)
+                            }
+                            itemsIndexed(items, key = { _, item -> item.action }) { index, item ->
+                                val row = index / columns
+                                OverlayPressButton(material = material, dark = dark,
+                                    shape = RoundedRectangle(15.dp, RoundedCornerStyle.Continuous),
+                                    onClick = { select(item.action) }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                                    enabled = expanded, facePadding = PaddingValues(horizontal = 5.dp, vertical = 3.dp),
+                                    alignment = Alignment.CenterStart) {
+                                    BasicText(item.label, Modifier.padding(horizontal = 18.dp, vertical = 8.dp)
+                                        .menuLabelReveal(p, 0.38f + 0.035f * row.coerceAtMost(6)), style = labelStyle)
+                                }
+                            }
+                        }
+                    }
+                }
+                // The long-press lens samples the panel and its text. It is outside the recorded layer.
+                if (menuSource != null) {
+                    Box(Modifier.matchParentSize().padding(top = travel).clip(clipShape)) {
+                        MenuSelectionLens(menuSource, { lensBounds.value }, lensShape, dark)
                     }
                 }
             }
-            .pointerInput(itemCount) {
+        }
+
+        val actionLabel = if (expanded) closeLabel else title
+        val triggerInput = if (!triggerEnabled) Modifier.clearAndSetSemantics {} else Modifier
+            .semantics {
+                contentDescription = actionLabel
+                role = Role.Button
+                onClick { changeExpanded(!currentExpanded); true }
+                onLongClick { changeExpanded(true); true }
+            }
+            .onKeyEvent {
+                if (it.key != Key.Enter && it.key != Key.NumPadEnter && it.key != Key.DirectionCenter && it.key != Key.Spacebar) false
+                else {
+                    if (it.type == KeyEventType.KeyDown) {
+                        if (!keyPressed) press.press()
+                        keyPressed = true
+                        contact = Offset(0.5f, 0.5f)
+                    } else if (it.type == KeyEventType.KeyUp && keyPressed) {
+                        keyPressed = false
+                        press.release()
+                        changeExpanded(!currentExpanded)
+                    }
+                    true
+                }
+            }.onFocusChanged {
+                focused = it.isFocused
+                if (!focused && keyPressed) {
+                    keyPressed = false
+                    press.cancel()
+                }
+            }.focusable()
+            .pointerInput(drag) {
                 awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    val headerPx = headerHeight.toPx()
-                    val rowPx = itemHeight.toPx()
-                    fun idxAt(y: Float): Int =
-                        ((y - headerPx) / rowPx).toInt().coerceIn(0, (itemCount - 1).coerceAtLeast(0))
-                    val upEarly = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
-                        waitForUpOrCancellation()
-                    }
-                    if (upEarly != null) {
-                        // 未到长按就抬起 → 点按
-                        onToggle()
-                        return@awaitEachGesture
-                    }
-                    // 长按 → 展开，并保持手指不离开即可继续拖选
-                    if (!visibleState.value) onToggle()
-                    var selecting = itemCount > 0
-                    while (selecting) {
-                        val ev = awaitPointerEvent()
-                        val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
-                        if (!ch.pressed) {
-                            val i = if (hoverY >= 0f) idxAt(hoverY) else -1
-                            hoverY = -1f
-                            if (i >= 0) onSelect(i)
-                            break
+                    val down = awaitFirstDown()
+                    down.consume()
+                    contact = Offset((down.position.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f),
+                        (down.position.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f))
+                    press.press(down.position)
+                    try {
+                        // A cancelled press and a long-press timeout are distinct outcomes.
+                        val finished = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                            val up = waitForUpOrCancellation()
+                            if (up != null) {
+                                up.consume()
+                                press.release()
+                                changeExpanded(!currentExpanded)
+                            }
+                            true
                         }
-                        val prev = hoverY
-                        hoverY = if (ch.position.y > headerPx) ch.position.y else -1f
-                        val ni = if (hoverY >= 0f) idxAt(hoverY) else -1
-                        val pi = if (prev >= 0f) idxAt(prev) else -1
-                        if (ni != pi && ni >= 0) onHoverChange(ni)
+                        if (finished != null) return@awaitEachGesture
+                        drag.point = down.position
+                        drag.active = true
+                        changeExpanded(true)
+                        haptic()
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.singleOrNull { it.id == down.id } ?: break
+                            if (change.isConsumed || event.changes.any { it.id != down.id && it.pressed }) break
+                            drag.point = change.position
+                            if (!change.pressed) {
+                                change.consume()
+                                press.release()
+                                if (currentExpanded) drag.actionAtPointer()?.let(select)
+                                break
+                            }
+                            change.consume()
+                        }
+                    } finally {
+                        press.cancel()
+                        drag.finish()
                     }
                 }
             }
-    ) {
-        // 收缩态：⋮ 图标
-        if (iconAlpha > 0.01f) {
-            Canvas(Modifier.matchParentSize().graphicsLayer { alpha = iconAlpha }) {
-                val r = 1.7.dp.toPx()
-                val gap = 5.2.dp.toPx()
-                val cx = size.width / 2f
-                val cy = size.height / 2f
-                drawCircle(Color.White, r, Offset(cx, cy - gap))
-                drawCircle(Color.White, r, Offset(cx, cy))
-                drawCircle(Color.White, r, Offset(cx, cy + gap))
-            }
-        }
-        // 展开态：菜单项
-        if (contentAlpha > 0.01f) {
-            Box(Modifier.fillMaxSize().layerBackdrop(menuBackdrop)) {
-                Column(Modifier.graphicsLayer { alpha = contentAlpha }) {
-                    content()
+        Box(Modifier.padding(top = topMargin, end = endMargin).size(triggerSize)
+            .graphicsLayer { alpha = triggerAlpha }.onGloballyPositioned { drag.anchor = it }.then(triggerInput),
+            contentAlignment = Alignment.Center) {
+            val shape = RoundedCornerShape(50)
+            // The initial circle hands its material to the expanding panel. Bring the separate
+            // close button's glass back as the panel clears the stationary toolbar target.
+            val circleAlpha = 1f - menuPhase(progress, 0f, 0.14f) + menuPhase(progress, 0.21f, 0.45f)
+            Box(Modifier.size(ToolbarFace).graphicsLayer {
+                alpha = circleAlpha
+                applyGlassPress(press.deformation, direction)
+            }.overlayGlass(backdrop, shape, dark, (2f - 0.7f * pressure).dp, (9f + 5f * pressure).dp,
+                (13f + 9f * pressure).dp)
+                .then(if (focused) Modifier.border(2.dp, foreground, shape) else Modifier)) {
+                if (pressure > 0f) Canvas(Modifier.matchParentSize()) {
+                    val point = Offset(size.width * contact.x, size.height * contact.y)
+                    drawRect(Brush.radialGradient(listOf(Color.White.copy(alpha = 0.32f * pressure), Color.Transparent),
+                        center = point, radius = size.minDimension * 0.76f))
                 }
             }
-        if (hoverY >= 0f && contentAlpha > 0.01f && itemCount > 0) {
-            val d = androidx.compose.ui.platform.LocalDensity.current
-            val headerPx = with(d) { headerHeight.toPx() }
-            val rowPx = with(d) { itemHeight.toPx() }
-            val idx = ((hoverY - headerPx) / rowPx).toInt().coerceIn(0, (itemCount - 1).coerceAtLeast(0))
-            val center = headerPx + (idx + 0.5f) * rowPx
-            val magnetY = hoverY + (center - hoverY) * 0.13f
-            val topPx = (magnetY - rowPx / 2f).coerceIn(headerPx, headerPx + (itemCount - 1) * rowPx)
-            val hoverShape: Shape = RoundedRectangle((itemHeight - 4.dp) / 2, RoundedCornerStyle.Continuous)
-            Box(
-                Modifier
-                    .offset(y = with(d) { topPx.toDp() })
-                    .padding(horizontal = 6.dp)
-                    .fillMaxWidth()
-                    .height(itemHeight - 4.dp)
-                    .drawBackdrop(
-                        backdrop = menuBackdrop,
-                        shape = { hoverShape },
-                        highlight = null,
-                        effects = {
-                            vibrancy()
-                            blur(1f.dp.toPx())
-                            lens(7f.dp.toPx(), 11f.dp.toPx())
-                        },
-                        layerBlock = {},
-                        onDrawSurface = { drawRect(Color.White.copy(alpha = 0.10f)) }
-                    )
-                    .drawWithCache {
-                        val o = hoverShape.createOutline(size, layoutDirection, this)
-                        onDrawBehind {
-                            drawOutline(o, Color.White.copy(alpha = 0.40f), style = Stroke(1.1f.dp.toPx()))
-                        }
-                    }
-            )
+            Canvas(Modifier.size(ToolbarFace)) {
+                val angle = Math.PI * 0.5 * progress
+                val gap = 5.15.dp.toPx()
+                val step = Offset(kotlin.math.sin(angle).toFloat() * gap, kotlin.math.cos(angle).toFloat() * gap)
+                for (i in -1..1) drawCircle(foreground, 1.65.dp.toPx(), center + step * i.toFloat())
+            }
         }
-        }
-}
-}
-
-/** 菜单遮罩：点空白关闭 */
-@Composable
-internal fun GlassMenuScrim(onDismiss: () -> Unit) {
-    val interaction = remember { MutableInteractionSource() }
-    Box(
-        Modifier.fillMaxSize().clickable(interactionSource = interaction, indication = null) { onDismiss() }
-    )
-}
-
-/** 菜单容器：右上角锚定 */
-@Composable
-internal fun GlassMenuAnchor(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
-    Box(modifier, contentAlignment = Alignment.TopEnd) { content() }
+    }
 }

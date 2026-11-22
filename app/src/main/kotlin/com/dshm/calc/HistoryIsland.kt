@@ -1,373 +1,297 @@
 package com.dshm.calc
 
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.Transition
 import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.keyframes
-import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.AbsoluteRoundedCornerShape
+import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.blur as blurModifier
-import androidx.compose.ui.draw.drawWithCache
-import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.graphics.drawOutline
-import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.MotionDurationScale
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.BlendMode
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.paneTitle
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.sp
 import com.kyant.backdrop.Backdrop
-import com.kyant.backdrop.drawBackdrop
-import com.kyant.backdrop.effects.blur
-import com.kyant.backdrop.effects.lens
-import com.kyant.backdrop.effects.vibrancy
-import kotlinx.coroutines.launch
+import com.kyant.shapes.RoundedCornerStyle
+import com.kyant.shapes.RoundedRectangle
+import kotlin.math.abs
 
-private val IslandHeight = 40.dp
-private val IslandPadH = 14.dp
-private val IslandIcon = 15.dp
-private val IslandGap = 8.dp
-private val EdgeFade = 12.dp
-private val PanelRowH = 44.dp
-private val PanelHeaderH = 36.dp
-private val PanelPadV = 10.dp
+private val SidePadding = 14.dp
+private val ClockSize = 15.dp
+private val ClockGap = 8.dp
+private val PanelPadding = 8.dp
 
-private fun lerpDp(a: Dp, b: Dp, t: Float): Dp = a + (b - a) * t.coerceIn(0f, 1f)
-private fun lerpF(a: Float, b: Float, t: Float): Float = a + (b - a) * t.coerceIn(0f, 1f)
+private fun morphPhase(progress: Float, start: Float, end: Float): Float {
+    val t = ((progress - start) / (end - start)).coerceIn(0f, 1f)
+    return t * t * (3f - 2f * t)
+}
 
-/**
- * 灵动岛：液态玻璃材质，收缩态常驻最近一条历史；点击后经过
- * 按压 → 收成圆形 → 放大为面板 的非线性形变，展开历史列表。
- */
+@Composable
+internal fun Transition<Boolean>.historyTravel() = animateFloat(
+    transitionSpec = { spring(dampingRatio = 0.76f, stiffness = 180f, visibilityThreshold = 0.005f) },
+    label = "History island"
+) { if (it) 1f else 0f }
+
+/** The outer pill occupies a 48 dp toolbar slot. Its glass face is 40 dp high. */
 @Composable
 internal fun HistoryIsland(
     history: List<HistoryItem>,
     backdrop: Backdrop,
-    surfaceColor: Color,
-    contentColor: Color,
+    dark: Boolean,
+    str: Str,
     collapsedMaxWidth: Dp,
     expanded: Boolean,
+    travel: Float,
+    previewActive: Boolean,
+    interactive: Boolean,
     onToggle: () -> Unit,
     expandedWidth: Dp,
     maxPanelHeight: Dp,
     onClear: () -> Unit,
     onUseResult: (String) -> Unit
 ) {
-
-    val progress = remember { Animatable(0f) }
-    val scope = rememberCoroutineScope()
-
-    val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
-    val pressScale = remember { Animatable(1f) }
-    LaunchedEffect(pressed) {
-        pressScale.animateTo(if (pressed) 0.94f else 1f, tween(90))
-    }
-
-    val p = progress.value
-    val latest = history.firstOrNull()
-    val text = latest?.let { "${it.expr} = ${it.result}" } ?: ""
-
-    val context = LocalContext.current
-    val measurer = rememberTextMeasurer()
-    val style = TextStyle(fontSize = 13.sp, color = contentColor, fontWeight = FontWeight.Medium)
-    val textW = remember(text, style) { measurer.measure(AnnotatedString(text), style).size.width }
+    val contentColor = overlayInk(dark)
+    val entries = history.take(10)
+    val latest = entries.firstOrNull()
+    val preview = latest?.let { "${it.expr} = ${it.result}" } ?: str.history
+    val rowCount = entries.size
     val density = LocalDensity.current
-    val textDp = with(density) { textW.toDp() }
-    val tail = IslandIcon + IslandGap + IslandPadH * 2
-    val pillW = (textDp + tail).coerceIn(72.dp, collapsedMaxWidth)
-    val avail = (pillW - tail).coerceAtLeast(0.dp)
-    val overflow = (textDp - avail).coerceAtLeast(0.dp)
-
-    val marquee = rememberInfiniteTransition(label = "island-marquee")
-    val shift by marquee.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = keyframes {
-                durationMillis = if (overflow > 0.dp) 5200 else 4000
-                0f at 0
-                0f at 900
-                1f at 3900
-                1f at 4700
-                0f at 5200
-            },
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "shift"
+    val style = TextStyle(fontSize = 13.sp, color = contentColor, fontWeight = FontWeight.Medium)
+    val measurer = rememberTextMeasurer()
+    val widthLimit = collapsedMaxWidth.coerceAtLeast(1.dp)
+    val trim = SidePadding * 2 + ClockSize + ClockGap
+    val maxTextPixels = with(density) { (widthLimit - trim).coerceAtLeast(0.dp).roundToPx() }
+    val textWidth = remember(preview, style, measurer, maxTextPixels) {
+        measurer.measure(preview, style, softWrap = false, maxLines = 1, constraints = Constraints(maxWidth = maxTextPixels)).size.width
+    }
+    val pillWidth by animateDpAsState(
+        (with(density) { textWidth.toDp() } + trim).coerceIn(minOf(72.dp, widthLimit), widthLimit),
+        tween(160), label = "history preview width"
     )
-
-    // 展开高度：按真实行数计算（0 条空态也算一行高度），上限 maxPanelHeight
-    val rows = history.size
-    val contentH = PanelHeaderH + PanelRowH * rows.coerceAtLeast(1).toFloat() + PanelRowH + PanelPadV * 2f
-    val targetH = contentH.coerceAtMost(maxPanelHeight)
-    val heightAnim = remember { androidx.compose.animation.core.Animatable(targetH.value) }
-    LaunchedEffect(targetH) {
-        heightAnim.animateTo(
-            targetH.value,
-            androidx.compose.animation.core.spring(
-                dampingRatio = 0.82f,
-                stiffness = 150f,
-                visibilityThreshold = 0.5f
-            )
-        )
-    }
-
-    // 胶囊 → 圆 → 面板
-    val circleP = 0.30f
-    val w: Dp
-    val h: Dp
-    val radius: Dp
-    if (p <= circleP) {
-        val t = p / circleP
-        w = lerpDp(pillW, IslandHeight, t)
-        h = IslandHeight
-        radius = IslandHeight / 2
-    } else {
-        val t = (p - circleP) / (1f - circleP)
-        w = lerpDp(IslandHeight, expandedWidth, t)
-        h = lerpDp(IslandHeight, heightAnim.value.dp, t)
-        radius = lerpDp(IslandHeight / 2, 30.dp, t)
-    }
-    val shape: androidx.compose.ui.graphics.Shape = com.kyant.shapes.RoundedRectangle(
-        radius, com.kyant.shapes.RoundedCornerStyle.Continuous
+    val rowHeight = maxOf(ToolbarTouch, with(density) { 18.sp.toDp() } + 18.dp)
+    val visibleRows = 1 + maxOf(rowCount, 1) + if (rowCount > 0) 1 else 0
+    val panelHeight by animateDpAsState(
+        minOf(rowHeight * visibleRows + PanelPadding * 2, maxPanelHeight.coerceAtLeast(1.dp)),
+        spring(dampingRatio = 0.85f, stiffness = 230f), label = "history list height"
     )
-    // 形变过程中岛本身高斯模糊，归位时平滑消失
-    val morphBlur = (kotlin.math.sin(p * Math.PI).toFloat() * 9f).dp
+    val progress = travel.coerceIn(0f, 1f)
+    // Hold the circle briefly between the two shape changes, in either direction.
+    val circle = morphPhase(progress, 0f, 0.27f)
+    val open = morphPhase(progress, 0.38f, 1f)
+    val diffusion = morphPhase(progress, 0.10f, 0.42f) * (1f - morphPhase(progress, 0.47f, 0.84f))
+    val rebound = minOf(3.dp, 105.dp * abs(travel - progress))
+    val diameter = minOf(ToolbarFace, widthLimit)
+    val width = lerp(lerp(pillWidth, diameter, circle), expandedWidth.coerceAtLeast(1.dp), open)
+    val height = lerp(ToolbarFace, minOf(panelHeight, maxPanelHeight.coerceAtLeast(1.dp)), open)
+    val inset = (ToolbarTouch - ToolbarFace) / 2 * (1f - open)
+    val corner = lerp(ToolbarFace / 2, 26.dp, open)
+    val shape = remember(corner) { RoundedRectangle(corner, RoundedCornerStyle.Continuous) }
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
+    val press = rememberGlassPressMotion(if (interactive) interaction else null)
+    val currentToggle by rememberUpdatedState(onToggle)
+    val panelAlpha = morphPhase(progress, 0.50f, 0.92f)
+    val panelEnabled = interactive && expanded
+    val material = if (panelAlpha > 0f) rememberPressableGlassMaterial() else null
 
-    // 展开状态由外部控制，弹簧动画天然支持中途打断
-    LaunchedEffect(expanded) {
-        progress.animateTo(
-            targetValue = if (expanded) 1f else 0f,
-            animationSpec = androidx.compose.animation.core.spring(
-                dampingRatio = 0.86f,
-                stiffness = 150f,
-                visibilityThreshold = 0.001f
-            )
-        )
-    }
-
-    val collapsedAlpha = (1f - p / 0.35f).coerceIn(0f, 1f)
-    val expandedAlpha = ((p - 0.55f) / 0.45f).coerceIn(0f, 1f)
-
-    Box(
-        Modifier
-            .width(w)
-            .height(h)
-            .blurModifier(morphBlur, edgeTreatment = androidx.compose.ui.draw.BlurredEdgeTreatment.Unbounded)
-            .graphicsLayer {
-                scaleX = pressScale.value
-                scaleY = pressScale.value
-            }
-            .drawBackdrop(
-                backdrop = backdrop,
-                shape = { shape },
-                highlight = null,
-                effects = {
-                    vibrancy()
-                    blur(2f.dp.toPx())
-                    lens((11f + 6f * p).dp.toPx(), (17f + 8f * p).dp.toPx())
-                },
-                layerBlock = {},
-                onDrawSurface = { drawRect(surfaceColor) }
-            )
-            .drawWithCache {
-                val outline = shape.createOutline(size, layoutDirection, this)
-                val rimLight = Brush.linearGradient(
-                    0f to Color.White.copy(alpha = 0.58f),
-                    0.34f to Color.White.copy(alpha = 0.22f),
-                    0.66f to Color.Transparent,
-                    1f to Color.White.copy(alpha = 0.32f),
-                    end = Offset(size.width, size.height)
-                )
-                val bevelShade = Brush.linearGradient(
-                    0f to Color(0xFF172338).copy(alpha = 0.16f),
-                    0.5f to Color.Transparent,
-                    1f to Color(0xFF172338).copy(alpha = 0.22f),
-                    end = Offset(size.width, size.height)
-                )
-                onDrawBehind {
-                    drawOutline(outline, bevelShade, style = Stroke(3.4.dp.toPx()))
-                    drawOutline(outline, rimLight, style = Stroke(1.7.dp.toPx()))
+    Box(Modifier.width(width).height(height + inset * 2)
+        .then(if (interactive) Modifier else Modifier.clearAndSetSemantics {})) {
+        Box(Modifier.matchParentSize().padding(vertical = inset)) {
+            // Keep the label, list and pointer coordinates independent of the deforming glass.
+            Spacer(Modifier.matchParentSize()
+                .graphicsLayer {
+                    val force = press.deformation * (1f - 0.65f * open)
+                    applyGlassPress(force, glassPressDirection(press.contact, size.width, size.height))
+                    scaleX += rebound.toPx() / size.width.coerceAtLeast(1f)
+                    scaleY += 0.65f * rebound.toPx() / size.height.coerceAtLeast(1f)
+                    transformOrigin = TransformOrigin(0.5f, 0.5f * (1f - open))
                 }
-            }
-            .clickable(interactionSource = interaction, indication = null) { onToggle() }
-    ) {
-        // 收缩内容
-        if (collapsedAlpha > 0.01f) {
-            Row(
-                Modifier
-                    .align(Alignment.Center)
-                    .graphicsLayer { alpha = collapsedAlpha }
-                    .padding(horizontal = IslandPadH),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Canvas(Modifier.size(IslandIcon)) {
-                    val stroke = 1.35.dp.toPx()
-                    drawCircle(contentColor, radius = size.minDimension * 0.42f, style = Stroke(stroke))
-                    drawLine(
-                        contentColor, center,
-                        androidx.compose.ui.geometry.Offset(center.x, size.height * 0.26f),
-                        stroke, StrokeCap.Round
-                    )
-                    drawLine(
-                        contentColor, center,
-                        androidx.compose.ui.geometry.Offset(size.width * 0.68f, size.height * 0.58f),
-                        stroke, StrokeCap.Round
-                    )
-                }
-                Spacer(Modifier.width(IslandGap))
-                Box(
-                    Modifier
-                        .weight(1f)
-                        .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-                        .drawWithContent {
-                            drawContent()
-                            val f = EdgeFade.toPx() / size.width.coerceAtLeast(1f)
-                            drawRect(
-                                brush = Brush.horizontalGradient(
-                                    0f to Color.Black,
-                                    f.coerceIn(0f, 0.4f) to Color.Transparent,
-                                    (1f - f).coerceIn(0.6f, 1f) to Color.Transparent,
-                                    1f to Color.Black
-                                ),
-                                blendMode = BlendMode.DstOut
-                            )
+                .motionBlur(6.dp * diffusion)
+                .overlayGlass(backdrop, shape, dark, (2f + 8f * open).dp,
+                    (11f + 6f * open + 3f * press.pressure).dp, (17f + 8f * open + 4f * press.pressure).dp,
+                    exportedBackdrop = material?.exportedBackdrop)
+                .then(if (interactive && focused && !expanded) Modifier.border(2.dp, contentColor, shape) else Modifier))
+            Box(Modifier.matchParentSize().clip(shape), contentAlignment = Alignment.Center) {
+                val previewAlpha = 1f - morphPhase(progress, 0.34f, 0.53f)
+                if (previewAlpha > 0f) {
+                    val labelAlpha = 1f - morphPhase(progress, 0f, 0.23f)
+                    val clockInset = ((width - ClockSize) / 2).coerceAtLeast(0.dp)
+                    val windowFocused = LocalWindowInfo.current.isWindowFocused
+                    val motionScale = rememberCoroutineScope().coroutineContext[MotionDurationScale]?.scaleFactor ?: 1f
+                    Row(
+                        Modifier.fillMaxWidth().graphicsLayer { alpha = previewAlpha }.clearAndSetSemantics {}
+                            .padding(horizontal = lerp(minOf(SidePadding, width / 6), clockInset, circle)),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        ClockIcon(contentColor)
+                        Spacer(Modifier.width(ClockGap * (1f - circle)))
+                        key(preview) {
+                            val marquee = if (interactive && previewActive && windowFocused && !expanded && progress == 0f && motionScale > 0f) {
+                                Modifier.basicMarquee(iterations = Int.MAX_VALUE)
+                            } else Modifier
+                            BasicText(preview, modifier = Modifier.weight(1f).graphicsLayer { alpha = labelAlpha }.clipToBounds().then(marquee),
+                                style = style, maxLines = 1, softWrap = false)
                         }
-                ) {
-                    if (overflow > 0.dp) {
-                        Box(Modifier.offset(x = -overflow * shift)) {
-                            androidx.compose.foundation.text.BasicText(text, style = style, maxLines = 1, softWrap = false)
-                        }
-                    } else {
-                        androidx.compose.foundation.text.BasicText(text, style = style, maxLines = 1, softWrap = false)
                     }
+                }
+                if (material != null) {
+                    val semantics = if (panelEnabled) Modifier.semantics { paneTitle = str.history }
+                        else Modifier.clearAndSetSemantics {}
+                    HistoryPanel(
+                        entries, str, contentColor, rowHeight, panelEnabled, interaction, focused, material, dark,
+                        onToggle, onClear, onUseResult,
+                        Modifier.wrapContentSize(Alignment.TopStart, unbounded = true)
+                            .size(expandedWidth, minOf(panelHeight, maxPanelHeight.coerceAtLeast(1.dp)))
+                            .graphicsLayer {
+                                alpha = panelAlpha
+                                translationY = 4.dp.toPx() * (1f - panelAlpha)
+                            }.then(semantics)
+                            .then(if (panelEnabled) Modifier.pointerInput(Unit) { detectTapGestures { currentToggle() } } else Modifier)
+                    )
                 }
             }
         }
-
-        // 展开内容
-        if (expandedAlpha > 0.01f) {
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .graphicsLayer {
-                        alpha = expandedAlpha
-                        val s = 0.94f + 0.06f * expandedAlpha
-                        scaleX = s
-                        scaleY = s
-                    }
-                    .padding(horizontal = 14.dp, vertical = PanelPadV)
-            ) {
-                Row(
-                    Modifier.fillMaxWidth().height(PanelHeaderH),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    androidx.compose.foundation.text.BasicText(
-                        "历史",
-                        style = TextStyle(color = contentColor.copy(alpha = 0.72f), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                    )
+        // While the list is leaving, only the toolbar row can reverse the transition.
+        if (interactive && (!expanded || panelAlpha == 0f)) {
+            Box(
+                Modifier.fillMaxWidth().height(minOf(ToolbarTouch, height + inset * 2)).clickable(
+                    interactionSource = interaction, indication = null, role = Role.Button, onClick = onToggle
+                ).semantics {
+                    contentDescription = if (latest == null) str.history else "${str.history}, $preview"
                 }
-                if (history.isEmpty()) {
-                    Box(Modifier.fillMaxWidth().height(PanelRowH), contentAlignment = Alignment.CenterStart) {
-                        androidx.compose.foundation.text.BasicText(
-                            "暂无历史",
-                            style = TextStyle(color = contentColor.copy(alpha = 0.45f), fontSize = 13.sp)
-                        )
-                    }
-                } else {
-                    history.forEach { item ->
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .height(PanelRowH)
-                                .clickable { onUseResult(item.result) },
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            androidx.compose.foundation.text.BasicText(
-                                "${item.expr} = ${item.result}",
-                                style = TextStyle(color = contentColor, fontSize = 13.sp),
-                                maxLines = 1,
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Box(
-                                Modifier.size(32.dp).clickable { onUseResult(item.result); onToggle() },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Canvas(Modifier.size(15.dp)) {
-                                    val s = 1.4.dp.toPx()
-                                    val r = androidx.compose.ui.geometry.CornerRadius(2.5.dp.toPx())
-                                    drawRoundRect(
-                                        contentColor.copy(alpha = 0.75f),
-                                        topLeft = androidx.compose.ui.geometry.Offset(size.width * 0.22f, size.height * 0.10f),
-                                        size = androidx.compose.ui.geometry.Size(size.width * 0.66f, size.height * 0.66f),
-                                        cornerRadius = r, style = Stroke(s)
-                                    )
-                                    drawRoundRect(
-                                        contentColor.copy(alpha = 0.75f),
-                                        topLeft = androidx.compose.ui.geometry.Offset(size.width * 0.10f, size.height * 0.26f),
-                                        size = androidx.compose.ui.geometry.Size(size.width * 0.66f, size.height * 0.66f),
-                                        cornerRadius = r, style = Stroke(s)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-                Box(
-                    Modifier.fillMaxWidth().height(PanelRowH).clickable { onClear() },
-                    contentAlignment = Alignment.Center
-                ) {
-                    androidx.compose.foundation.text.BasicText(
-                        "清空历史",
-                        style = TextStyle(color = contentColor.copy(alpha = 0.55f), fontSize = 13.sp)
-                    )
-                }
-            }
+            )
         }
     }
 }
 
+@Composable
+private fun ClockIcon(color: Color) {
+    Canvas(Modifier.size(ClockSize)) {
+        val stroke = 1.4.dp.toPx()
+        drawCircle(color, radius = size.minDimension * 0.42f, style = Stroke(stroke))
+        drawLine(color, center, Offset(center.x, size.height * 0.25f), stroke, StrokeCap.Round)
+        drawLine(color, center, Offset(size.width * 0.69f, size.height * 0.59f), stroke, StrokeCap.Round)
+    }
+}
+
+@Composable
+private fun HistoryPanel(
+    history: List<HistoryItem>,
+    str: Str,
+    ink: Color,
+    rowHeight: Dp,
+    enabled: Boolean,
+    headerInteraction: MutableInteractionSource,
+    headerFocused: Boolean,
+    material: PressableGlassMaterial,
+    dark: Boolean,
+    onToggle: () -> Unit,
+    onClear: () -> Unit,
+    onUseResult: (String) -> Unit,
+    modifier: Modifier
+) {
+    // The header and footer also scroll, so even a short multi-window panel can reach every action.
+    Column(modifier.verticalScroll(rememberScrollState(), enabled = enabled).padding(horizontal = 14.dp, vertical = PanelPadding)) {
+        val itemShape = remember { RoundedRectangle(13.dp, RoundedCornerStyle.Continuous) }
+        Row(
+            Modifier.fillMaxWidth().height(rowHeight)
+                .then(if (enabled && headerFocused) Modifier.border(2.dp, ink, itemShape) else Modifier)
+                .clickable(enabled = enabled, interactionSource = headerInteraction, indication = null,
+                    role = Role.Button, onClickLabel = str.close, onClick = onToggle)
+                .padding(horizontal = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            BasicText(str.history, modifier = Modifier.weight(1f).semantics { heading() },
+                style = TextStyle(color = ink, fontSize = 14.sp, fontWeight = FontWeight.SemiBold), maxLines = 1)
+            Canvas(Modifier.size(16.dp)) {
+                val tip = Offset(center.x, size.height * 0.34f)
+                drawLine(ink, Offset(size.width * 0.19f, size.height * 0.65f), tip, 1.6.dp.toPx(), StrokeCap.Round)
+                drawLine(ink, tip, Offset(size.width * 0.81f, size.height * 0.65f), 1.6.dp.toPx(), StrokeCap.Round)
+            }
+        }
+        if (history.isEmpty()) {
+            Box(Modifier.fillMaxWidth().height(rowHeight).padding(horizontal = 6.dp), contentAlignment = Alignment.CenterStart) {
+                BasicText(str.emptyHistory, style = TextStyle(color = ink.copy(alpha = 0.82f), fontSize = 13.sp))
+            }
+        } else {
+            for (item in history) {
+                Row(Modifier.fillMaxWidth().height(rowHeight), verticalAlignment = Alignment.CenterVertically) {
+                    OverlayPressButton(material, dark, itemShape, { onUseResult(item.result) },
+                        Modifier.weight(1f).height(rowHeight), enabled = enabled,
+                        facePadding = PaddingValues(vertical = 2.dp), onClickLabel = str.useResult, alignment = Alignment.CenterStart) {
+                        BasicText("${item.expr} = ${item.result}", Modifier.padding(horizontal = 6.dp), style = TextStyle(color = ink, fontSize = 14.sp),
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    val useAndClose = "${str.useResult} · ${str.close}"
+                    OverlayPressButton(material, dark, itemShape, { onUseResult(item.result); onToggle() },
+                        Modifier.size(ToolbarTouch).semantics { contentDescription = "$useAndClose, ${item.result}" },
+                        enabled = enabled, facePadding = PaddingValues(4.dp), onClickLabel = useAndClose) {
+                        Canvas(Modifier.size(18.dp)) {
+                            val stroke = 1.6.dp.toPx()
+                            val corner = Offset(size.width * 0.77f, size.height * 0.64f)
+                            val tip = Offset(size.width * 0.22f, corner.y)
+                            drawLine(ink, Offset(corner.x, size.height * 0.23f), corner, stroke, StrokeCap.Round)
+                            drawLine(ink, corner, tip, stroke, StrokeCap.Round)
+                            drawLine(ink, tip, Offset(size.width * 0.44f, size.height * 0.42f), stroke, StrokeCap.Round)
+                            drawLine(ink, tip, Offset(size.width * 0.44f, size.height * 0.86f), stroke, StrokeCap.Round)
+                        }
+                    }
+                }
+            }
+            OverlayPressButton(material, dark, itemShape, onClear, Modifier.fillMaxWidth().height(rowHeight),
+                enabled = enabled, facePadding = PaddingValues(vertical = 2.dp)) {
+                BasicText(str.clearHistory, style = TextStyle(color = ink.copy(alpha = 0.86f), fontSize = 13.sp, fontWeight = FontWeight.Medium))
+            }
+        }
+    }
+}

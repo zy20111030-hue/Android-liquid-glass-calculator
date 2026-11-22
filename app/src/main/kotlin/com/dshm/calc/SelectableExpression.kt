@@ -3,8 +3,16 @@ package com.dshm.calc
 import androidx.compose.ui.text.TextRange
 import java.util.IdentityHashMap
 
+/** A left operand of a power or postfix operator needs an explicit boundary in these cases. */
+internal fun requiresVisibleGrouping(items: List<FItem>): Boolean = when (val only = items.singleOrNull()) {
+    is FItem.Num -> only.text.startsWith('-') || only.text.startsWith('+')
+    is FItem.FracItem, is FItem.Power -> true
+    null -> items.size > 1
+    else -> false
+}
+
 /** A selectable text view of the editor tree. Offsets are valid until the next edit. */
-internal class SelectableExpression(editor: FracEditor) {
+internal class SelectableExpression(editor: ExpressionEditor) {
     private val nodes = IdentityHashMap<FItem, TextRange>()
     private val slots = IdentityHashMap<MutableList<FItem>, TextRange>()
     private val delimiters = mutableMapOf<Int, FItem>()
@@ -21,6 +29,7 @@ internal class SelectableExpression(editor: FracEditor) {
             when (item) {
                 is FItem.Num -> append(item.text)
                 is FItem.Op -> append(item.sym)
+                is FItem.Constant -> append(item.kind.label)
                 is FItem.ParenItem -> {
                     delimiters[length] = item
                     append('(')
@@ -37,32 +46,74 @@ internal class SelectableExpression(editor: FracEditor) {
                     appendFractionPart(item.den)
                     if (slot.size > 1) append(')')
                 }
+                is FItem.Power -> {
+                    appendOperand(item.base)
+                    appendSyntax("^", item)
+                    appendOperand(item.exponent)
+                }
+                is FItem.Root -> {
+                    val degree = item.degree
+                    appendSyntax(if (degree == null) "sqrt(" else "root(", item)
+                    if (degree != null) {
+                        appendSlot(degree)
+                        appendSyntax(",", item)
+                    }
+                    appendSlot(item.radicand)
+                    appendSyntax(")", item)
+                }
+                is FItem.Function -> {
+                    if (item.kind.postfix) {
+                        appendOperand(item.argument)
+                        appendSyntax(item.kind.label, item)
+                    } else {
+                        appendSyntax(item.kind.label + "(", item)
+                        appendSlot(item.argument)
+                        appendSyntax(")", item)
+                    }
+                }
             }
             nodes[item] = TextRange(start, length)
         }
         slots[slot] = TextRange(slotStart, length)
     }
 
+    private fun StringBuilder.appendSyntax(value: String, owner: FItem.Template) {
+        for (ch in value) {
+            delimiters[length] = owner
+            append(ch)
+        }
+    }
+
+    private fun StringBuilder.appendOperand(part: MutableList<FItem>) {
+        val group = part.isEmpty() || requiresVisibleGrouping(part)
+        if (group) append('(')
+        appendSlot(part)
+        if (group) append(')')
+    }
+
     private fun StringBuilder.appendFractionPart(part: MutableList<FItem>) {
         val only = part.singleOrNull()
-        val group = only !is FItem.Num && only !is FItem.ParenItem
+        // Fractions flatten to '/'. A division in either child therefore needs grouping.
+        val group = only == null || only is FItem.FracItem || only is FItem.Op
         if (group) append('(')
         appendSlot(part)
         if (group) append(')')
     }
 
     /** Put the keypad insertion point at the selected text, preserving surviving groups. */
-    fun prepareEdit(editor: FracEditor, selection: TextRange) {
+    fun prepareEdit(editor: ExpressionEditor, selection: TextRange) {
         val start = selection.min.coerceIn(0, text.length)
         val end = selection.max.coerceIn(start, text.length)
         if (start == 0 && end == text.length) {
             editor.clear()
             return
         }
-        val delimiter = if (end == start + 1) delimiters[start] else null
+        val delimiter = delimiters[start]?.takeIf { owner ->
+            end > start && (start until end).all { delimiters[it] === owner }
+        }
         // An interior offset disambiguates a group from an adjacent number ending at its start.
         val anchor = if (delimiter != null) nodes.getValue(delimiter).start + 1 else start
-        placeCursor(editor, anchor, end, editor.root, emptyList(), emptyList(), delimiter)
+        placeCursor(editor, anchor, end, editor.root, emptyList(), delimiter)
         if (delimiter != null) {
             unwrap(editor, delimiter, text[start] == ')')
             return
@@ -79,42 +130,41 @@ internal class SelectableExpression(editor: FracEditor) {
     }
 
     private fun placeCursor(
-        editor: FracEditor, offset: Int, end: Int, slot: MutableList<FItem>,
-        fractions: List<FracFrame>, parentheses: List<ParenFrame>, delimiter: FItem?
+        editor: ExpressionEditor, offset: Int, end: Int, slot: MutableList<FItem>,
+        path: List<SlotStep>, delimiter: FItem?
     ) {
         for ((index, item) in slot.withIndex()) {
             val range = nodes.getValue(item)
-            // A simple fraction starts at the same text offset as its numerator.
-            // Replacing just that numerator must keep the caret inside the fraction.
-            val startsInNumerator = item is FItem.FracItem && offset == range.start &&
-                slots.getValue(item.num).start == offset && end < range.end
-            if (item === delimiter || (offset <= range.start && !startsInNumerator)) {
-                editor.setCursor(slot, index, 0, fractions, parentheses)
+            // A template may start at the same offset as a child (e.g. the numerator in 3/4).
+            val startsInChild = item is FItem.Template && offset == range.start && end < range.end &&
+                item.fields.any { slots.getValue(it.items).start == offset }
+            if (item === delimiter || (offset <= range.start && !startsInChild)) {
+                editor.setCursor(path, index, 0)
                 return
             }
             if (item is FItem.Num && offset <= range.end) {
-                editor.setCursor(slot, index, offset - range.start, fractions, parentheses)
+                editor.setCursor(path, index, offset - range.start)
                 return
             }
             if (offset < range.end) {
-                when (item) {
-                    is FItem.ParenItem -> placeCursor(editor, offset, end, item.inner, fractions, parentheses + ParenFrame(slot, index, item), delimiter)
-                    is FItem.FracItem -> {
-                        val inNumerator = offset <= slots.getValue(item.num).end
-                        val part = if (inNumerator) item.num else item.den
-                        placeCursor(editor, offset, end, part, fractions + FracFrame(slot, index, item, inNumerator), parentheses, delimiter)
-                    }
-                    else -> editor.setCursor(slot, index, 0, fractions, parentheses)
+                if (item is FItem.Template) {
+                    val visualOrder = item.fields.sortedBy { slots.getValue(it.items).start }
+                    val field = visualOrder.firstOrNull { offset <= slots.getValue(it.items).end } ?: visualOrder.last()
+                    placeCursor(editor, offset, end, field.items, path + SlotStep(index, field.role), delimiter)
+                } else {
+                    editor.setCursor(path, index, 0)
                 }
                 return
             }
         }
-        editor.setCursor(slot, slot.size, 0, fractions, parentheses)
+        editor.setCursor(path, slot.size, 0)
     }
 
-    private fun unwrap(editor: FracEditor, group: FItem, closing: Boolean) {
+    private fun unwrap(editor: ExpressionEditor, group: FItem, closing: Boolean) {
         val slot = editor.slot
         val start = editor.index
+        fun operand(field: MutableList<FItem>): List<FItem> =
+            if (field.size > 1) listOf(FItem.ParenItem(field)) else field
         val items: List<FItem>
         when (group) {
             is FItem.ParenItem -> {
@@ -122,11 +172,23 @@ internal class SelectableExpression(editor: FracEditor) {
                 if (closing) editor.index += items.size
             }
             is FItem.FracItem -> {
-                fun operand(part: MutableList<FItem>): List<FItem> =
-                    if (part.size > 1) listOf(FItem.ParenItem(part)) else part
                 val numerator = operand(group.num)
                 items = numerator + operand(group.den)
                 editor.index += numerator.size
+            }
+            is FItem.Power -> {
+                val base = operand(group.base)
+                items = base + operand(group.exponent)
+                editor.index += base.size
+            }
+            is FItem.Function -> {
+                items = group.argument
+                if (group.kind.postfix || closing) editor.index += items.size
+            }
+            is FItem.Root -> {
+                val degree = group.degree?.let(::operand).orEmpty()
+                items = degree + if (degree.isEmpty()) group.radicand else operand(group.radicand)
+                editor.index += if (closing) items.size else degree.size
             }
             else -> return
         }
@@ -154,12 +216,8 @@ internal class SelectableExpression(editor: FracEditor) {
                 is FItem.Num -> item.text = item.text.removeRange(
                     (start - range.start).coerceAtLeast(0), (end - range.start).coerceAtMost(item.text.length)
                 )
-                is FItem.ParenItem -> removeRange(item.inner, start, end)
-                is FItem.FracItem -> {
-                    removeRange(item.num, start, end)
-                    removeRange(item.den, start, end)
-                }
-                is FItem.Op -> Unit
+                is FItem.Template -> item.fields.forEach { removeRange(it.items, start, end) }
+                is FItem.Op, is FItem.Constant -> Unit
             }
         }
     }

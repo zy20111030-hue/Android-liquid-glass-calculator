@@ -1,14 +1,19 @@
 package com.dshm.calc
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.MotionDurationScale
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -24,6 +29,8 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toSize
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.flow.collectLatest
 import kotlin.math.min
 
 internal val LocalKeypadLights = staticCompositionLocalOf<KeypadLights?> { null }
@@ -34,19 +41,16 @@ internal class KeypadLights {
     val emitters = mutableStateListOf<KeyLightSource>()
 }
 
-internal class KeyLightSource(private val keypad: KeypadLights) {
-    val pressure = Animatable(0f)
-    var localContact by mutableStateOf(Offset.Unspecified)
-        private set
+internal class KeyLightSource(private val keypad: KeypadLights, val motion: GlassPressMotion) {
+    val localContact get() = motion.contact
+    private var pointerDown by mutableStateOf(false)
+    private val heldGlow = Animatable(0f)
+    val glow get() = maxOf(motion.pressure, heldGlow.value)
+    val emitting get() = pointerDown || motion.active || heldGlow.value > 0f
     var size by mutableStateOf(IntSize.Zero)
         private set
     var bounds by mutableStateOf(Rect.Zero)
         private set
-
-    /** 手指是否仍按在屏幕上（滑出键区也算按下）。 */
-    var isDown by mutableStateOf(false)
-        private set
-    private var pointerContact = Offset.Unspecified
 
     fun place(coordinates: LayoutCoordinates) {
         size = coordinates.size
@@ -59,33 +63,45 @@ internal class KeyLightSource(private val keypad: KeypadLights) {
             position.x.coerceIn(0f, size.width.toFloat()),
             position.y.coerceIn(0f, size.height.toFloat())
         )
-        pointerContact = point
-        localContact = point
+        motion.move(point)
     }
 
-    fun endPointer() {
-        pointerContact = Offset.Unspecified
+    fun beginPointer(position: Offset) {
+        movePointer(position)
+        pointerDown = true
     }
 
-    fun beginPress(position: Offset) {
-        isDown = true
-        localContact = if (pointerContact.isSpecified) pointerContact else position
-        if (this !in keypad.emitters) keypad.emitters.add(this)
+    fun endPointer() { pointerDown = false }
+
+    suspend fun followContactLight() {
+        snapshotFlow { pointerDown }.collectLatest { down ->
+            // Physical light survives a drag outside the key. It never manufactures a tap impulse.
+            val target = if (down) 0.92f else 0f
+            if (target == heldGlow.value) return@collectLatest
+            if (currentCoroutineContext()[MotionDurationScale]?.scaleFactor == 0f) heldGlow.snapTo(target)
+            else heldGlow.animateTo(target, tween(if (down) 82 else 105, easing = LinearOutSlowInEasing))
+        }
+    }
+
+    fun setEmitting(active: Boolean) {
+        if (active) {
+            if (this !in keypad.emitters) keypad.emitters.add(this)
+        } else keypad.emitters.remove(this)
     }
 
     fun finishPress() {
-        isDown = false
-        keypad.emitters.remove(this)
+        endPointer()
+        motion.cancel()
+        setEmitting(false)
     }
 }
 
-// Observe motion in the fixed hit area. 按下状态由这里自己管理：只要手指没抬起，
-// 即使滑出按键范围也保持按下（位置夹取到边缘），不会像 combinedClickable 那样被判定为取消。
+// Track light position without consuming the gesture. The native clickable decides release or cancellation.
 internal fun Modifier.trackKeyContact(key: KeyLightSource): Modifier =
     onGloballyPositioned(key::place).pointerInput(key) {
         awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-            key.beginPress(down.position)
+            key.beginPointer(down.position)
             try {
                 do {
                     val event = awaitPointerEvent(PointerEventPass.Initial)
@@ -95,7 +111,6 @@ internal fun Modifier.trackKeyContact(key: KeyLightSource): Modifier =
                 } while (true)
             } finally {
                 key.endPointer()
-                key.finishPress()
             }
         }
     }
@@ -108,7 +123,7 @@ private data class ReflectedLight(
 )
 
 // A single transparent layer lets neighboring rims respond without redrawing their backdrops.
-internal fun Modifier.drawNeighborReflections(keypad: KeypadLights, dark: Boolean, circle: Boolean = true): Modifier = drawWithCache {
+internal fun Modifier.drawNeighborReflections(keypad: KeypadLights, dark: Boolean, roundness: State<Float>): Modifier = drawWithCache {
     val coreWidth = 1.25.dp.toPx()
     val coreStroke = Stroke(coreWidth)
     val innerStroke = Stroke(1.dp.toPx())
@@ -139,15 +154,15 @@ internal fun Modifier.drawNeighborReflections(keypad: KeypadLights, dark: Boolea
     }
     onDrawBehind {
         for (light in lights) {
-            val strength = light.source.pressure.value
+            val strength = light.source.glow
             if (strength <= 0f) continue
             for (neighbor in light.neighbors) {
                 // Cross-fade onto a neighboring key as its own bent edge settles back into place.
-                val settled = (1f - neighbor.pressure.value * 2.5f).coerceIn(0f, 1f)
+                val settled = (1f - neighbor.motion.pressure * 2.5f).coerceIn(0f, 1f)
                 val intensity = strength * settled
                 if (intensity == 0f) continue
                 val rect = neighbor.bounds
-                val corner = if (circle) min(rect.width, rect.height) * .5f else 16.dp.toPx()
+                val corner = keyCornerRadius(rect.minDimension, roundness.value)
                 val edge = rect.deflate(coreWidth / 2f)
                 drawRoundRect(
                     light.highlight, edge.topLeft, edge.size, CornerRadius(corner - coreWidth / 2f),
