@@ -157,15 +157,13 @@ class MainActivity : ComponentActivity() {
 
 
 /** 参考语言设置应用 App 级 Locale（Android 13+），启动器名称由资源本地化提供 */
+/**
+ * 语言切换不再触碰应用组件或 App 级 Locale：界面文案由应用内 language 状态驱动，
+ * 避免系统重建 Activity 导致的整屏闪烁。桌面名称则跟随系统语言解析。
+ */
+@Suppress("UNUSED_PARAMETER")
 fun syncLauncherAlias(context: Context, lang: String) {
-    if (Build.VERSION.SDK_INT >= 33) {
-        try {
-            val lm = context.getSystemService(android.app.LocaleManager::class.java)
-            lm?.applicationLocales = android.os.LocaleList.forLanguageTags(lang)
-        } catch (e: Exception) {
-            // ignore
-        }
-    }
+    // 故意留空
 }
 
 private val DarkGradient = listOf(
