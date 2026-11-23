@@ -20,73 +20,73 @@ class GlassPressMotionTest {
         private val clock = BroadcastFrameClock()
         private val scale = object : MotionDurationScale { override val scaleFactor get() = factor }
         val scope = CoroutineScope(parent.coroutineContext + clock + scale)
-        val motion = GlassPressMotion(scope)
 
-        suspend fun advance(count: Int) = buildList {
+        suspend fun advance(count: Int, sample: () -> Float = { 0f }) = buildList {
             repeat(count) {
                 Snapshot.sendApplyNotifications()
                 yield()
                 time += 8_000_000L
                 clock.sendFrame(time)
                 yield()
-                assertTrue(motion.pressure in 0f..1f)
-                add(motion.deformation)
+                add(sample())
             }
         }
     }
 
-    @Test fun tapBetweenFramesIsVisibleButCancellationDoesNotAddPressure() = runBlocking {
+    @Test fun draggingBeyondTheEdgeHoldsTheKeyUntilLiftThenOnlyItsOwnFaceFades() = runBlocking {
         val frames = Frames(this)
-        val motion = frames.motion
-        motion.press()
-        motion.release()
-        assertEquals(0.48f, frames.advance(32).max(), 0.005f)
-        assertFalse(motion.active)
-        motion.press()
-        frames.advance(4)
-        motion.cancel()
-        val cancelled = frames.advance(25)
-        assertTrue(cancelled.zipWithNext().all { (a, b) -> b <= a })
-        assertEquals(0f, cancelled.min(), 0f)
-    }
-
-    @Test fun retriggerContinuesAtCurrentDepthAndDisabledAnimationsFinishImmediately() = runBlocking {
-        val frames = Frames(this)
-        val motion = frames.motion
-        motion.press()
-        frames.advance(18)
-        motion.release()
-        frames.advance(5)
-        val interrupted = motion.deformation
-        motion.press()
-        assertEquals(interrupted, motion.deformation, 0f)
-        frames.advance(18)
-        motion.release()
-        assertEquals(0f, frames.advance(33).min(), 0f)
-        frames.factor = 0f
-        motion.press()
-        assertEquals(1f, motion.pressure, 0f)
-        motion.release()
-        assertFalse(motion.active)
-        assertEquals(0f, motion.deformation, 0f)
-    }
-
-    @Test fun cancelledKeyKeepsItsPhysicalLightUntilTheFingerLifts() = runBlocking {
-        val frames = Frames(this)
-        val key = KeyLightSource(KeypadLights(), frames.motion)
-        val light = frames.scope.launch(start = CoroutineStart.UNDISPATCHED) { key.followContactLight() }
+        val keypad = KeypadLights()
+        val key = KeyLightSource(keypad)
+        val light = frames.scope.launch(start = CoroutineStart.UNDISPATCHED) { key.followPressure() }
         try {
-            key.beginPointer(Offset.Zero)
-            frames.motion.press()
+            key.beginPress(Offset.Zero)
+            key.movePointer(Offset(-40f, -50f))
             frames.advance(18)
-            frames.motion.cancel()
-            frames.advance(30)
-            assertEquals(0f, frames.motion.deformation, 0f)
-            assertTrue(key.emitting && key.glow > 0.8f)
-            key.endPointer()
-            frames.advance(26)
-            assertFalse(key.emitting)
-            assertEquals(0f, key.glow, 0f)
+            assertEquals(Offset.Zero, key.localContact)
+            assertEquals(listOf(key), keypad.emitters.toList())
+            assertEquals(1f, key.pressure.value, 0f)
+            key.finishPress()
+            assertTrue(keypad.emitters.isEmpty())
+            assertEquals(1f, key.pressure.value, 0f)
+            val release = frames.advance(28) { key.pressure.value }
+            assertTrue(release.zipWithNext().all { (a, b) -> b <= a })
+            assertEquals(0f, release.last(), 0f)
+        } finally {
+            light.cancelAndJoin()
+        }
+    }
+
+    @Test fun reducedMotionSettlesAtThePhysicalKeyState() = runBlocking {
+        val frames = Frames(this)
+        frames.factor = 0f
+        val key = KeyLightSource(KeypadLights())
+        val light = frames.scope.launch(start = CoroutineStart.UNDISPATCHED) { key.followPressure() }
+        try {
+            key.beginPress(Offset.Zero)
+            frames.advance(2)
+            assertEquals(1f, key.pressure.value, 0f)
+            key.finishPress()
+            frames.advance(3)
+            assertEquals(0f, key.pressure.value, 0f)
+        } finally {
+            light.cancelAndJoin()
+        }
+    }
+
+    @Test fun shortKeyContactCompletesTheOriginalHalfDepthPulse() = runBlocking {
+        val frames = Frames(this)
+        val key = KeyLightSource(KeypadLights())
+        val light = frames.scope.launch(start = CoroutineStart.UNDISPATCHED) { key.followPressure() }
+        try {
+            key.beginPress(Offset.Zero)
+            repeat(8) {
+                if (key.pressure.value == 0f) frames.advance(1)
+            }
+            assertTrue(key.pressure.value > 0.01f && key.pressure.value < 0.52f)
+            key.finishPress()
+            val release = frames.advance(32) { key.pressure.value }
+            assertEquals(0.52f, release.max(), 0.001f)
+            assertEquals(0f, release.last(), 0f)
         } finally {
             light.cancelAndJoin()
         }

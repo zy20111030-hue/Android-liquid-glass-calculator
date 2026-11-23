@@ -248,7 +248,6 @@ private fun WallpaperDirectory(
     }
     val ink = overlayInk(dark)
     val interactive = LocalPanelPresentation.current.interactive
-    val material = LocalPanelMaterial.current
     val listing = directory
     if (listing == null) {
         BasicText(labels.loading, Modifier.padding(12.dp), style = TextStyle(color = ink, fontSize = 15.sp))
@@ -258,15 +257,18 @@ private fun WallpaperDirectory(
         item(key = "heading") { PanelHeading(str.wallpaper, dark) }
         item(key = "path") {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                PanelButton("←", dark, onUp, modifier = Modifier.semantics { contentDescription = upLabel })
+                PanelButton("←", dark, onUp, modifier = Modifier.semantics { contentDescription = upLabel },
+                    feedback = OverlayButtonFeedback.Native)
                 BasicText(path, Modifier.weight(1f).padding(start = 10.dp),
                     style = TextStyle(color = ink.copy(alpha = 0.80f), fontSize = 13.sp), maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
         }
         item(key = "actions") {
             Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                PanelButton(str.restoreDefault, dark, onReset, modifier = Modifier.weight(1f))
-                PanelButton(str.close, dark, onClose, secondary = true, modifier = Modifier.weight(1f))
+                PanelButton(str.restoreDefault, dark, onReset, modifier = Modifier.weight(1f),
+                    feedback = OverlayButtonFeedback.Native)
+                PanelButton(str.close, dark, onClose, secondary = true, modifier = Modifier.weight(1f),
+                    feedback = OverlayButtonFeedback.Native)
             }
         }
         if (listing.entries.isEmpty()) item(key = "empty") {
@@ -274,7 +276,7 @@ private fun WallpaperDirectory(
                 style = TextStyle(color = ink.copy(alpha = 0.84f), fontSize = 14.sp))
         }
         items(listing.entries, key = { it.file.absolutePath }) { entry ->
-            OverlayPressButton(material, dark, RoundedCornerShape(14.dp),
+            OverlayPressButton(null, dark, RoundedCornerShape(14.dp), feedback = OverlayButtonFeedback.Native,
                 onClick = {
                     if (entry.directory) onDirectory(entry.file) else onImage(entry.file)
                 }, enabled = interactive, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {

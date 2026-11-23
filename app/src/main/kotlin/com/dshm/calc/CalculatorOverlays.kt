@@ -1,9 +1,8 @@
 package com.dshm.calc
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.ExperimentalTransitionApi
-import androidx.compose.animation.core.FastOutLinearInEasing
-import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.Transition
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.createChildTransition
@@ -15,6 +14,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -48,7 +48,10 @@ internal val ToolbarFace = 40.dp
 private fun CalculatorOverlay?.settingsPage() =
     this?.takeUnless { it == CalculatorOverlay.MENU || it == CalculatorOverlay.HISTORY }
 
-internal class PanelPresentation(val progress: State<Float>, val interactive: Boolean)
+// The Material dialog window animates opacity and vertical translation on the same curve.
+private val DialogEnter = tween<Float>(220, easing = CubicBezierEasing(0.2f, 0f, 0f, 1f))
+private val DialogExit = tween<Float>(150, easing = CubicBezierEasing(0.3f, 0f, 1f, 1f))
+internal class PanelPresentation(val progress: State<Float>, val offsetY: State<Float>, val interactive: Boolean)
 internal val LocalPanelPresentation = compositionLocalOf<PanelPresentation> { error("Missing overlay host") }
 
 internal val Transition<CalculatorOverlay?>.onStage: Boolean
@@ -65,41 +68,41 @@ internal fun Modifier.coveredByOverlay(covered: Boolean): Modifier = if (!covere
 @Composable
 @OptIn(ExperimentalTransitionApi::class)
 internal fun CalculatorOverlays(
-    transition: Transition<CalculatorOverlay?>, navigate: (CalculatorOverlay?) -> Unit, scene: Backdrop,
+    transition: Transition<CalculatorOverlay?>, menuProgress: State<Float>, navigate: (CalculatorOverlay?) -> Unit, scene: Backdrop,
     landscape: Boolean, dark: Boolean, titleColor: Color, str: Str, items: List<GlassMenuItem>, history: List<HistoryItem>,
-    clearHistory: () -> Unit, useResult: (String) -> Unit, dragHaptic: () -> Unit,
+    toggleScientific: () -> Unit, toggleHistory: () -> Unit, clearHistory: () -> Unit, useResult: (String) -> Unit, dragHaptic: () -> Unit,
     pageContent: @Composable (CalculatorOverlay, Backdrop) -> Unit
 ) {
     val island = transition.createChildTransition(label = "History visibility") { it == CalculatorOverlay.HISTORY }
     val islandTravel by island.historyTravel()
-    val menu = transition.createChildTransition(label = "Menu visibility") { it == CalculatorOverlay.MENU }
+    val menuExpanded = transition.targetState == CalculatorOverlay.MENU
     val page = transition.targetState.settingsPage()
     val pageVisibility = transition.createChildTransition(label = "Settings visibility") { it.settingsPage() != null }
     val reveal = pageVisibility.animateFloat(transitionSpec = {
-        if (targetState) tween(245, easing = LinearOutSlowInEasing) else tween(165, easing = FastOutLinearInEasing)
+        if (targetState) DialogEnter else DialogExit
     }, label = "Settings glass") { if (it) 1f else 0f }
     var lastPage by remember { mutableStateOf(page) }
     SideEffect { if (page != null) lastPage = page }
     val pageOnStage = page != null || pageVisibility.currentState || reveal.value > 0f
     val islandOnStage = island.currentState || island.targetState || island.isRunning
-    val menuOnStage = menu.currentState || menu.targetState || menu.isRunning
-    val shade = transition.animateFloat(transitionSpec = { tween(180) }, label = "Toolbar shade") {
-        if (it == CalculatorOverlay.MENU || it == CalculatorOverlay.HISTORY) 1f else 0f
+    val menuOnStage = menuExpanded || menuProgress.value > 0f
+    val shade by remember(menuProgress, island) {
+        derivedStateOf { maxOf(menuProgress.value, islandTravel.coerceIn(0f, 1f)) }
     }
     val toolbar = rememberLayerBackdrop()
     val heading = rememberLayerBackdrop()
     val dimAmount = if (dark) 0.16f else 0.09f
-    val dim = rememberCanvasBackdrop { drawRect(Color.Black.copy(alpha = shade.value * dimAmount)) }
+    val dim = rememberCanvasBackdrop { drawRect(Color.Black.copy(alpha = shade * dimAmount)) }
     val menuSource = rememberCombinedBackdrop(scene, heading, dim)
     val historySource = rememberCombinedBackdrop(scene, dim)
     val pageSource = rememberCombinedBackdrop(scene, toolbar)
-    BackHandler(transition.onStage) { navigate(null) }
+    BackHandler(transition.onStage || menuOnStage) { navigate(null) }
 
     Box(Modifier.fillMaxSize().coveredByOverlay(pageOnStage)
         .then(if (pageOnStage) Modifier.layerBackdrop(toolbar) else Modifier)) {
         // The title and the menu fit again when the island reaches the circular phase of its return.
-        val peerAlpha = 1f - (islandTravel / 0.32f).coerceIn(0f, 1f)
-        if (islandOnStage && !menuOnStage) OverlayScrim(shade.value * dimAmount) { navigate(null) }
+        val peerAlpha = 1f - (islandTravel / HistoryCircleProgress).coerceIn(0f, 1f)
+        if (islandOnStage && !menuOnStage) OverlayScrim(shade * dimAmount) { navigate(null) }
         BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()
                 .padding(horizontal = ToolbarEdge, vertical = ToolbarTop),
                 contentAlignment = if (landscape) Alignment.TopStart else Alignment.TopCenter) {
@@ -127,24 +130,40 @@ internal fun CalculatorOverlays(
                 }
                 HistoryIsland(history, if (islandOnStage && !menuOnStage) historySource else scene, dark, str,
                     collapsedMaxWidth = pillWidth.coerceAtMost(panelWidth), expanded = island.targetState,
-                    travel = islandTravel, previewActive = !pageOnStage && !menuOnStage, interactive = !pageOnStage && !menuOnStage,
-                    onToggle = { navigate(if (island.targetState) null else CalculatorOverlay.HISTORY) },
+                    travel = islandTravel, settledOpen = island.currentState && island.targetState && !island.isRunning,
+                    previewActive = !pageOnStage && !menuOnStage, interactive = !pageOnStage && !menuOnStage,
+                    onToggle = toggleHistory,
                     expandedWidth = panelWidth, maxPanelHeight = panelHeight,
                     onClear = clearHistory, onUseResult = useResult)
             }
         }
-        if (menuOnStage) OverlayScrim(shade.value * dimAmount) { navigate(null) }
+        if (menuOnStage) OverlayScrim(shade * dimAmount) { navigate(null) }
         if (peerAlpha > 0f || menuOnStage) {
-            GlassMenu(visibility = menu, backdrop = if (menuOnStage) menuSource else scene, dark = dark, title = str.settings,
+            GlassMenu(expanded = menuExpanded, progress = menuProgress.value, landscape = landscape,
+                backdrop = if (menuOnStage) menuSource else scene, dark = dark, title = str.settings,
                 closeLabel = str.close, items = items, triggerAlpha = peerAlpha, triggerEnabled = !island.targetState && !pageOnStage,
                 onExpandedChange = { navigate(if (it) CalculatorOverlay.MENU else null) },
-                onSelect = navigate, onDragHaptic = dragHaptic,
+                onSelect = { action ->
+                    when (action) {
+                        CalculatorMenuAction.ScientificCalculator -> {
+                            navigate(null)
+                            toggleScientific()
+                        }
+                        is CalculatorOverlay -> navigate(action)
+                    }
+                }, onDragHaptic = dragHaptic,
                 modifier = Modifier.fillMaxSize().safeDrawingPadding())
         }
     }
     val shown = page ?: lastPage
     if (pageOnStage && shown != null) {
-        val presentation = remember(reveal, page != null) { PanelPresentation(reveal, page != null) }
+        // Register on first appearance. The hidden position is below on entry and above on exit.
+        val offsetY = pageVisibility.animateFloat(transitionSpec = {
+            if (targetState) DialogEnter else DialogExit
+        }, label = "Settings window position") { visible ->
+            if (visible) 0f else if (pageVisibility.targetState) 20f else -10f
+        }
+        val presentation = remember(reveal, offsetY, page != null) { PanelPresentation(reveal, offsetY, page != null) }
         CompositionLocalProvider(LocalPanelPresentation provides presentation) {
             Box(Modifier.fillMaxSize().coveredByOverlay(page == null)) { pageContent(shown, pageSource) }
         }

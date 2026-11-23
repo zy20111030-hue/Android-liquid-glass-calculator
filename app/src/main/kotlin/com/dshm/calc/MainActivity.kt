@@ -1,12 +1,15 @@
 package com.dshm.calc
 
+import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.view.Surface
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.core.content.edit
 import androidx.core.graphics.get
 import androidx.core.graphics.scale
@@ -15,19 +18,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.ViewModelProvider
 import androidx.activity.compose.setContent
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
-import androidx.compose.animation.togetherWith
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.FastOutLinearInEasing
-import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.updateTransition
 import androidx.compose.foundation.Image
@@ -58,21 +49,26 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.pointer.pointerInput
@@ -120,8 +116,38 @@ class MainActivity : ComponentActivity() {
             bars.show(WindowInsetsCompat.Type.statusBars())
         }
         val expression = ViewModelProvider(this)[ExpressionSession::class.java]
-        setContent { CalculatorApp(expression) }
+        setContent {
+            var manualScientific by rememberSaveable { mutableStateOf(false) }
+            var lockedPortrait by rememberSaveable { mutableIntStateOf(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) }
+            val orientation = LocalConfiguration.current.orientation
+            LaunchedEffect(manualScientific, orientation) {
+                // Some devices adopt the app's landscape rotation as the user's locked rotation.
+                // Return to the entry orientation before handing control back to the system.
+                val restore = lockedPortrait != ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED &&
+                    orientation == Configuration.ORIENTATION_LANDSCAPE && rotationLockedInFullscreen()
+                val direction = when {
+                    manualScientific -> ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE
+                    restore -> lockedPortrait
+                    else -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                }
+                if (!manualScientific && !restore) lockedPortrait = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                if (requestedOrientation != direction) requestedOrientation = direction
+            }
+            CalculatorApp(expression, manualScientific) { enabled ->
+                if (enabled && orientation == Configuration.ORIENTATION_PORTRAIT && rotationLockedInFullscreen()) {
+                    lockedPortrait = when (window.decorView.display?.rotation) {
+                        Surface.ROTATION_180, Surface.ROTATION_90 -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
+                        else -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                    }
+                }
+                manualScientific = enabled
+            }
+        }
     }
+
+    private fun rotationLockedInFullscreen(): Boolean =
+        (Build.VERSION.SDK_INT < Build.VERSION_CODES.N || !isInMultiWindowMode) &&
+            Settings.System.getInt(contentResolver, Settings.System.ACCELEROMETER_ROTATION, 1) == 0
 }
 
 
@@ -185,7 +211,8 @@ data class Str(
     val add: String, val subtract: String, val multiply: String, val divide: String, val equalsLabel: String,
     val selectAll: String, val done: String, val selectValue: String, val useResult: String,
     val insertFraction: String, val nextField: String, val absoluteValue: String,
-    val emptyHistory: String, val clearHistory: String
+    val emptyHistory: String, val clearHistory: String,
+    val scientificCalculator: String, val followOrientation: String
 )
 
 private val strings = mapOf(
@@ -194,21 +221,24 @@ private val strings = mapOf(
         "跟随系统", "壁纸取色", "无", "关闭", "标准", "增强", "取消",
         "版本 V4.0-release", "确定", "更换壁纸需要「允许访问所有文件」权限", "去授权", "恢复默认", "关闭", "错误", "复制",
         "历史", "退格", "清除", "插入括号", "加", "减", "乘", "除", "等于",
-        "全选", "完成", "选择数字", "回填", "插入分数", "下一个输入位置", "取绝对值", "暂无历史", "清空历史"
+        "全选", "完成", "选择数字", "回填", "插入分数", "下一个输入位置", "取绝对值", "暂无历史", "清空历史",
+        "科学计算器", "跟随屏幕方向"
     ),
     Lang.ZH_TW to Str(
         "計算器", "設置", "深色模式", "桌布", "震動", "語言", "關於",
         "跟隨系統", "桌布取色", "無", "關閉", "標準", "增強", "取消",
         "版本 V4.0-release", "確定", "更換桌布需要「允許存取所有檔案」權限", "去授權", "恢復預設", "關閉", "錯誤", "複製",
         "歷史", "退格", "清除", "插入括號", "加", "減", "乘", "除", "等於",
-        "全選", "完成", "選取數字", "帶入", "插入分數", "下一個輸入位置", "取絕對值", "暫無歷史", "清除歷史"
+        "全選", "完成", "選取數字", "帶入", "插入分數", "下一個輸入位置", "取絕對值", "暫無歷史", "清除歷史",
+        "科學計算器", "跟隨螢幕方向"
     ),
     Lang.EN to Str(
         "Calculator", "Settings", "Dark mode", "Wallpaper", "Vibration", "Language", "About",
         "Follow system", "Wallpaper color", "None", "Off", "Standard", "Enhanced", "Cancel",
         "Version V4.0-release", "OK", "Changing wallpaper requires 'All files access' permission", "Grant", "Restore default", "Close", "Error", "Copy",
         "History", "Backspace", "Clear", "Insert parentheses", "Plus", "Minus", "Multiply", "Divide", "Equals",
-        "Select all", "Done", "Select number", "Use result", "Insert fraction", "Next input field", "Take absolute value", "No history yet", "Clear history"
+        "Select all", "Done", "Select number", "Use result", "Insert fraction", "Next input field", "Take absolute value", "No history yet", "Clear history",
+        "Scientific calculator", "Follow screen orientation"
     )
 )
 
@@ -229,7 +259,7 @@ private fun featureIntroFor(lang: Lang): FeatureIntro = when (lang) {
             "· 竖屏长按 ÷ 插入分数，长按 AC 插入括号；横屏有独立按键",
             "· 竖屏先填分母，再点 ÷ 填分子。横屏先填分子，用 ⇥ 切换输入位置",
             "· 点按算式移动光标；长按数字或结果可选择、复制",
-            "· 横屏可输入幂、根式和三角函数，点 Deg/Rad 切换角度单位",
+            "· 横屏或从菜单打开科学计算器，可输入幂、根式和三角函数；点 Deg/Rad 切换角度单位",
             "· 顶部灵动岛常驻最近一次计算，点开可查看最近 10 条",
             "· 长按右上角圆点展开菜单，上下滑动即可选择",
             "· 按键形状可选圆角矩形或圆形",
@@ -243,7 +273,7 @@ private fun featureIntroFor(lang: Lang): FeatureIntro = when (lang) {
             "· 直向時長按 ÷ 插入分數，長按 AC 插入括號；橫向有獨立按鍵",
             "· 直向先填分母，再點 ÷ 填分子。橫向先填分子，用 ⇥ 切換輸入位置",
             "· 點按算式移動游標；長按數字或結果可選取、複製",
-            "· 橫向可輸入冪、根式與三角函數，點 Deg/Rad 切換角度單位",
+            "· 橫向或從選單開啟科學計算器，可輸入冪、根式與三角函數；點 Deg/Rad 切換角度單位",
             "· 頂部靈動島常駐最近一次計算，點開可查看最近 10 條",
             "· 長按右上角圓點展開選單，上下滑動即可選擇",
             "· 按鍵形狀可選圓角矩形或圓形",
@@ -257,7 +287,7 @@ private fun featureIntroFor(lang: Lang): FeatureIntro = when (lang) {
             "· Hold ÷ for fractions or AC for parentheses in portrait. In landscape, tap their own keys",
             "· Start with the denominator in portrait or the numerator in landscape. Tap ÷ or ⇥ respectively to advance",
             "· Tap to move the cursor; hold a number or result to select and copy",
-            "· Enter powers, roots and trigonometric functions in landscape. Tap Deg/Rad to change angle units",
+            "· Rotate to landscape or open Scientific calculator from the menu for powers, roots and trigonometry. Tap Deg/Rad to change angle units",
             "· The Dynamic Island keeps your latest result; tap to open the last 10",
             "· Long-press the dot at the top-right to open the menu, then slide to pick",
             "· Key shape can be rounded rectangle or circle",
@@ -278,7 +308,7 @@ private fun deserializeHistory(s: String): List<HistoryItem> =
 
 
 @Composable
-private fun CalculatorApp(session: ExpressionSession) {
+private fun CalculatorApp(session: ExpressionSession, manualScientific: Boolean, setManualScientific: (Boolean) -> Unit) {
     val backdrop = rememberLayerBackdrop()
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("calc_prefs", 0) }
@@ -292,8 +322,16 @@ private fun CalculatorApp(session: ExpressionSession) {
         catch (_: android.content.res.Resources.NotFoundException) { null }
     }
 
-    val onboarding = updateTransition(oobeDone, label = "First launch")
-    val entryOffset = with(LocalDensity.current) { 9.dp.roundToPx() }
+    val introExit = remember { Animatable(if (oobeDone) 0f else 1f) }
+    val calculatorEntry = remember { Animatable(if (oobeDone) 1f else 0f) }
+    var showIntroScene by remember { mutableStateOf(!oobeDone) }
+    LaunchedEffect(oobeDone) {
+        if (oobeDone && showIntroScene) {
+            introExit.animateTo(0f, tween(350))
+            showIntroScene = false
+            calculatorEntry.animateTo(1f, tween(500))
+        }
+    }
 
     val lang = Lang.values().find { it.code == language } ?: Lang.EN
     val str = stringsFor(lang)
@@ -313,25 +351,32 @@ private fun CalculatorApp(session: ExpressionSession) {
         "wallpaper" -> wallpaperIsDark ?: manualDark
         else -> manualDark
     }
-    val themeMix by animateFloatAsState(if (dark) 1f else 0f, tween(165), label = "Calculator appearance")
-    val fg = lerp(Color(0xFF15151A), Color.White, themeMix)
-    val equalsInk = lerp(Color(0xFF173F67), Color(0xFFB9DCFF), themeMix)
-    val buttonSurface = lerp(Color.White.copy(alpha = 0.42f), Color(0xFF0D0D10).copy(alpha = 0.5f), themeMix)
+    val fg = if (dark) Color.White else Color(0xFF15151A)
+    val equalsInk = if (dark) Color(0xFFB9DCFF) else Color(0xFF173F67)
+    val buttonSurface = if (dark) Color(0xFF0D0D10).copy(alpha = 0.5f) else Color.White.copy(alpha = 0.42f)
     val lightDisplayText = wallpaperIsDark ?: dark
-    val displayColor by animateColorAsState(if (lightDisplayText) Color(0xFFF4F6FA) else Color(0xFF181B20),
-        tween(165), label = "Display ink")
+    val displayColor = if (lightDisplayText) Color(0xFFF4F6FA) else Color(0xFF181B20)
 
     var overlay by rememberSaveable { mutableStateOf<CalculatorOverlay?>(null) }
     val overlayTransition = updateTransition(overlay, label = "Calculator overlays")
+    val menuProgress = rememberMenuProgress(overlay == CalculatorOverlay.MENU)
+    val overlayOnStage by remember(overlayTransition, menuProgress) {
+        derivedStateOf { overlayTransition.onStage || menuProgress.value > 0f }
+    }
+    BackHandler(enabled = manualScientific && !overlayOnStage && session.selection == null) {
+        setManualScientific(false)
+    }
     val focus = LocalFocusManager.current
     fun navigate(destination: CalculatorOverlay?) {
         if (overlay == null && destination != null) focus.clearFocus()
         overlay = destination
     }
     var keyShape by remember { mutableStateOf(prefs.getString("key_shape", "circle") ?: "circle") }
-    val keyRoundness = animateFloatAsState(if (keyShape == "circle") 1f else 0f, tween(180), label = "Key corner radius")
+    val keyRoundness = rememberUpdatedState(if (keyShape == "circle") 1f else 0f)
     val intro = remember(lang) { featureIntroFor(lang) }
-    val items = remember(lang) { menuItems(str, keyShapeText(lang, "title"), intro.title) }
+    val items = remember(lang, manualScientific) {
+        menuItems(str, keyShapeText(lang, "title"), intro.title, manualScientific)
+    }
 
     var vibrationLevel by remember { mutableStateOf(prefs.getString("vibration_level", "standard") ?: "standard") }
     val haptic = LocalHapticFeedback.current
@@ -371,12 +416,19 @@ private fun CalculatorApp(session: ExpressionSession) {
     val foreground = rememberLayerBackdrop()
     val scene = rememberCombinedBackdrop(backdrop, foreground)
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val scientific = landscape || manualScientific
     CompositionLocalProvider(
         LocalVibrationLevel provides vibrationLevel,
         LocalKeypadLights provides keypadLights,
         LocalKeyRoundness provides keyRoundness
     ) {
-        Box(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().graphicsLayer {
+            val progress = if (showIntroScene) introExit.value else calculatorEntry.value
+            scaleX = progress
+            scaleY = progress
+            alpha = progress
+            translationY = if (showIntroScene) 0f else (1f - progress) * 60.dp.toPx()
+        }) {
             Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
                 if (effectiveWallpaper != null) {
                     Image(
@@ -386,16 +438,14 @@ private fun CalculatorApp(session: ExpressionSession) {
                         modifier = Modifier.fillMaxSize()
                     )
                 } else {
-                    val gradientColors = LightGradient.mapIndexed { i, color -> lerp(color, DarkGradient[i], themeMix) }
+                    val gradientColors = if (dark) DarkGradient else LightGradient
                     Box(Modifier.fillMaxSize().background(Brush.linearGradient(gradientColors)))
                 }
             }
 
-            onboarding.AnimatedVisibility(visible = { it }, exit = ExitTransition.None,
-                enter = fadeIn(tween(240)) + slideInVertically(tween(255, easing = LinearOutSlowInEasing)) { entryOffset }) {
-                Box(Modifier.fillMaxSize().onPlaced { keypadLights.plane = it }
-                    .coveredByOverlay(!onboarding.currentState)) {
-                    Box(Modifier.fillMaxSize().coveredByOverlay(overlayTransition.onStage).layerBackdrop(foreground)) {
+            if (!showIntroScene) {
+                Box(Modifier.fillMaxSize().coveredByOverlay(calculatorEntry.isRunning)) {
+                    Box(Modifier.fillMaxSize().coveredByOverlay(overlayOnStage).layerBackdrop(foreground)) {
                         if (session.selection != null) {
                             // 选中态下，点空白区域即可退出选择、恢复原样
                             Box(
@@ -415,6 +465,8 @@ private fun CalculatorApp(session: ExpressionSession) {
                                 val keypadSize = if (landscape) {
                                     val height = (maxHeight * 0.74f).coerceAtMost(360.dp)
                                     Modifier.fillMaxWidth().height(height)
+                                } else if (manualScientific) {
+                                    Modifier.fillMaxWidth().height(maxHeight * 0.74f)
                                 } else {
                                     // On a nearly square portrait window, five rows still need to leave room for the formula.
                                     Modifier.width(minOf(maxWidth, maxHeight * 0.64f))
@@ -423,17 +475,28 @@ private fun CalculatorApp(session: ExpressionSession) {
                                     val formulaArea = Modifier.weight(1f).fillMaxWidth()
                                     ExpressionDisplay(session, str, displayColor, lightDisplayText, CalculatorFont,
                                         if (landscape) formulaArea.padding(start = historyMargin, end = 54.dp)
-                                        else formulaArea.padding(end = 10.dp), active = !overlayTransition.onStage && onboarding.currentState)
-                                    CalculatorKeypad(session, str, backdrop, buttonSurface, fg, equalsInk, ::onEquals, ::toggleThemeByLongPress,
-                                        landscape, keypadSize)
+                                        else formulaArea.padding(end = 10.dp), active = !overlayOnStage && !calculatorEntry.isRunning)
+                                    Box(keypadSize.onPlaced { keypadLights.plane = it }
+                                        .then(if (manualScientific && !landscape) Modifier.clipToBounds() else Modifier)) {
+                                        CalculatorKeypad(session, str, backdrop, buttonSurface, fg, equalsInk, ::onEquals, ::toggleThemeByLongPress,
+                                            scientific, if (scientific) Modifier.fillMaxSize() else Modifier.fillMaxWidth(), narrowWindow = !landscape)
+                                        Spacer(Modifier.matchParentSize().graphicsLayer()
+                                            .drawNeighborReflections(keypadLights, dark, keyRoundness))
+                                    }
                                 }
                             }
                         }
-                        Spacer(Modifier.matchParentSize().graphicsLayer()
-                            .drawNeighborReflections(keypadLights, dark, keyRoundness))
                     }
                     CalculatorOverlays(
-                        transition = overlayTransition, navigate = ::navigate, scene = scene, landscape = landscape, dark = dark,
+                        transition = overlayTransition, menuProgress = menuProgress, navigate = ::navigate, scene = scene, landscape = landscape, dark = dark,
+                        toggleScientific = { setManualScientific(!manualScientific) },
+                        toggleHistory = {
+                            when (overlay) {
+                                null -> navigate(CalculatorOverlay.HISTORY)
+                                CalculatorOverlay.HISTORY -> navigate(null)
+                                else -> Unit
+                            }
+                        },
                         titleColor = displayColor, str = str, items = items, history = history,
                         clearHistory = ::clearHistory, useResult = session::useResult,
                         dragHaptic = { hapticType(vibrationLevel, true)?.let { haptic.performHapticFeedback(it) } }
@@ -473,9 +536,7 @@ private fun CalculatorApp(session: ExpressionSession) {
                         }
                     }
                 }
-            }
-            onboarding.AnimatedVisibility(visible = { !it }, enter = EnterTransition.None,
-                exit = fadeOut(tween(150)) + slideOutVertically(tween(170)) { -entryOffset }) {
+            } else {
                 OobeScreen(backdrop, enabled = !oobeDone) { code ->
                     if (!oobeDone) {
                         language = code
@@ -492,46 +553,37 @@ private fun CalculatorApp(session: ExpressionSession) {
 private fun OobeScreen(backdrop: Backdrop, enabled: Boolean, onDone: (String) -> Unit) {
     var language by rememberSaveable { mutableStateOf("en") }
     var showIntro by rememberSaveable { mutableStateOf(false) }
-    val travel = with(LocalDensity.current) { 10.dp.roundToPx() }
-    AnimatedContent(
-        targetState = showIntro, modifier = Modifier.fillMaxSize(), label = "First launch page",
-        transitionSpec = {
-            (fadeIn(tween(195, delayMillis = 35)) + slideInVertically(tween(220, easing = LinearOutSlowInEasing)) { travel })
-                .togetherWith(fadeOut(tween(105)) + slideOutVertically(tween(145)) { -travel / 2 })
-        }
-    ) { introPage ->
-        val interactive = enabled && introPage == showIntro
-        Column(
-            Modifier.fillMaxSize().safeDrawingPadding().coveredByOverlay(!interactive)
-                .padding(horizontal = 32.dp).verticalScroll(rememberScrollState()).padding(vertical = 16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center
-        ) {
-            if (!introPage) {
-                BasicText("选择语言 / Select language",
-                    style = TextStyle(color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold))
-                Spacer(Modifier.height(24.dp))
-                for (option in Lang.entries) {
-                    val label = when (option) {
-                        Lang.ZH_CN -> "简体中文"
-                        Lang.ZH_TW -> "繁體中文"
-                        Lang.EN -> "English"
-                    }
-                    OobeButton(backdrop, label, interactive, chosen = language == option.code) { language = option.code }
+    val pageScroll = key(showIntro) { rememberScrollState() }
+    Column(
+        Modifier.fillMaxSize().safeDrawingPadding().coveredByOverlay(!enabled)
+            .padding(horizontal = 32.dp).verticalScroll(pageScroll).padding(vertical = 16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center
+    ) {
+        if (!showIntro) {
+            BasicText("选择语言 / Select language",
+                style = TextStyle(color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold))
+            Spacer(Modifier.height(24.dp))
+            for (option in Lang.entries) {
+                val label = when (option) {
+                    Lang.ZH_CN -> "简体中文"
+                    Lang.ZH_TW -> "繁體中文"
+                    Lang.EN -> "English"
                 }
-                Spacer(Modifier.height(32.dp))
-                OobeButton(backdrop, "开始 / Start", interactive) { showIntro = true }
-            } else {
-                val intro = featureIntroFor(Lang.entries.first { it.code == language })
-                BasicText(intro.title,
-                    style = TextStyle(color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold))
-                Spacer(Modifier.height(20.dp))
-                intro.lines.forEach { line ->
-                    BasicText(line, Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        style = TextStyle(color = Color.White.copy(alpha = 0.9f), fontSize = 15.sp))
-                }
-                Spacer(Modifier.height(28.dp))
-                OobeButton(backdrop, intro.continueLabel, interactive) { onDone(language) }
+                OobeButton(backdrop, label, enabled, chosen = language == option.code) { language = option.code }
             }
+            Spacer(Modifier.height(32.dp))
+            OobeButton(backdrop, "开始 / Start", enabled) { showIntro = true }
+        } else {
+            val intro = featureIntroFor(Lang.entries.first { it.code == language })
+            BasicText(intro.title,
+                style = TextStyle(color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold))
+            Spacer(Modifier.height(20.dp))
+            intro.lines.forEach { line ->
+                BasicText(line, Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    style = TextStyle(color = Color.White.copy(alpha = 0.9f), fontSize = 15.sp))
+            }
+            Spacer(Modifier.height(28.dp))
+            OobeButton(backdrop, intro.continueLabel, enabled) { onDone(language) }
         }
     }
 }
@@ -541,9 +593,9 @@ private fun OobeButton(backdrop: Backdrop, text: String, enabled: Boolean, chose
     val haptic = LocalHapticFeedback.current
     val vibrationLevel = LocalVibrationLevel.current
     val source = remember { MutableInteractionSource() }
-    val motion = rememberGlassPressMotion(source)
+    val press = rememberOptionScale(source)
     val focused by source.collectIsFocusedAsState()
-    val accent by animateFloatAsState(if (chosen != false) 1f else 0f, tween(145), label = "Language selection")
+    val accent = chosen != false
     val shape = RoundedCornerShape(if (chosen == null) 24.dp else 16.dp)
     Box(
         Modifier.fillMaxWidth().padding(vertical = 6.dp).heightIn(min = 48.dp)
@@ -553,28 +605,27 @@ private fun OobeButton(backdrop: Backdrop, text: String, enabled: Boolean, chose
                 onClick()
             }, contentAlignment = Alignment.Center
     ) {
-        Spacer(Modifier.matchParentSize().drawBackdrop(
+        Box(Modifier.fillMaxWidth().drawBackdrop(
             backdrop = backdrop, shape = { shape },
             effects = {
                 vibrancy()
                 blur(2.dp.toPx())
-                lens((14f + 3f * motion.pressure).dp.toPx(), (22f + 4f * motion.pressure).dp.toPx())
+                lens(14.dp.toPx(), 22.dp.toPx())
             },
-            layerBlock = {
-                applyGlassPress(motion.deformation, glassPressDirection(motion.contact, size.width, size.height))
-            },
+            layerBlock = { scaleX = press.value; scaleY = press.value },
             onDrawSurface = {
-                drawRect(lerp(Color.White.copy(alpha = 0.06f), Color(0xFF0A84FF).copy(alpha = 0.55f), accent))
+                drawRect(if (accent) Color(0xFF0A84FF).copy(alpha = 0.55f) else Color.White.copy(alpha = 0.06f))
             }
-        ))
-        if (focused) Spacer(Modifier.matchParentSize().border(2.dp, Color.White, shape))
-        BasicText(text, Modifier.padding(horizontal = 32.dp, vertical = 12.dp),
-            style = TextStyle(color = Color.White, fontSize = if (chosen == null) 18.sp else 17.sp,
-                fontWeight = if (chosen == null) FontWeight.Bold else FontWeight.Normal))
-        if (chosen != null) {
-            BasicText("✓", Modifier.align(Alignment.CenterEnd).padding(end = 14.dp)
-                .graphicsLayer { alpha = accent }.clearAndSetSemantics {},
-                style = TextStyle(color = Color.White, fontSize = 16.sp))
+        ).heightIn(min = 48.dp), contentAlignment = Alignment.Center) {
+            if (focused) Spacer(Modifier.matchParentSize().border(2.dp, Color.White, shape))
+            BasicText(text, Modifier.padding(horizontal = 32.dp, vertical = 12.dp),
+                style = TextStyle(color = Color.White, fontSize = if (chosen == null) 18.sp else 17.sp,
+                    fontWeight = if (chosen == null) FontWeight.Bold else FontWeight.Normal))
+            if (chosen == true) {
+                BasicText("✓", Modifier.align(Alignment.CenterEnd).padding(end = 14.dp)
+                    .clearAndSetSemantics {},
+                    style = TextStyle(color = Color.White, fontSize = 16.sp))
+            }
         }
     }
 }
@@ -610,8 +661,7 @@ fun GlassButton(
     val vibrationLevel = LocalVibrationLevel.current
     val interactionSource = remember { MutableInteractionSource() }
     val keypad = LocalKeypadLights.current ?: remember { KeypadLights() }
-    val motion = rememberGlassPressMotion(interactionSource)
-    val light = remember(keypad, motion) { KeyLightSource(keypad, motion) }
+    val light = remember(keypad) { KeyLightSource(keypad) }
     DisposableEffect(light) {
         keypad.keys.add(light)
         onDispose {

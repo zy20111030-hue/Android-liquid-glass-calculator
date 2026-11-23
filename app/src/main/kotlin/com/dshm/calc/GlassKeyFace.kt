@@ -10,12 +10,12 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.GraphicsLayerScope
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -28,8 +28,7 @@ import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
-import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 private object FullyRoundedKeys : State<Float> { override val value = 1f }
 internal val LocalKeyRoundness = staticCompositionLocalOf<State<Float>> { FullyRoundedKeys }
@@ -37,11 +36,31 @@ internal val LocalKeyRoundness = staticCompositionLocalOf<State<Float>> { FullyR
 private val CircleShape = AbsoluteRoundedCornerShape(50)
 private val RectCorner = 16.dp
 private val RectShape = AbsoluteRoundedCornerShape(RectCorner)
+private val PressBend = 4.6.dp
+private const val PressTravel = 3.4f
+private const val PressTravelAxis = 0.9f
+private const val PressShift = 1.5f
 
 internal fun Density.keyCornerRadius(shortSide: Float, roundness: Float): Float {
     val circle = shortSide * 0.5f
     val rectangle = minOf(RectCorner.toPx(), circle)
     return rectangle + (circle - rectangle) * roundness.coerceIn(0f, 1f)
+}
+
+private fun glassPressDirection(point: Offset, width: Float, height: Float): Offset {
+    if (!point.isSpecified || width <= 0f || height <= 0f) return Offset.Zero
+    return Offset((2f * point.x / width - 1f).coerceIn(-1f, 1f), (2f * point.y / height - 1f).coerceIn(-1f, 1f))
+}
+
+internal fun GraphicsLayerScope.applyKeyPress(pressure: Float, direction: Offset = Offset.Zero) {
+    val unit = 1.dp.toPx() * pressure
+    val (x, y) = direction
+    val travelX = (PressTravel + PressTravelAxis * abs(x)) * unit
+    val travelY = (PressTravel + PressTravelAxis * abs(y)) * unit
+    scaleX = 1f - travelX / size.width.coerceAtLeast(1f)
+    scaleY = 1f - travelY / size.height.coerceAtLeast(1f)
+    translationX = -PressShift * x * unit
+    translationY = -PressShift * y * unit
 }
 
 @Composable
@@ -67,7 +86,7 @@ internal fun BoxScope.GlassKeyFace(
             }
         }
     }
-    val motion = lightSource.motion
+    val pressure = lightSource.pressure
     val direction by remember(lightSource) {
         derivedStateOf {
             val point = lightSource.localContact
@@ -77,10 +96,8 @@ internal fun BoxScope.GlassKeyFace(
     }
     val glassShape by remember(lightSource, density, roundness) {
         derivedStateOf {
-            val size = lightSource.size
             val radius = corner
-            val shortSide = with(density) { minOf(size.width, size.height).toDp() }
-            val bend = minOf(4.6.dp, shortSide * 0.075f) * motion.pressure
+            val bend = PressBend * pressure.value
             val (x, y) = direction
             if (bend == 0.dp || direction == Offset.Zero) idleShape else AbsoluteRoundedCornerShape(
                 topLeft = (radius - bend * (x + y).coerceIn(0f, 1.5f)).coerceAtLeast(0.dp),
@@ -91,10 +108,7 @@ internal fun BoxScope.GlassKeyFace(
         }
     }
 
-    LaunchedEffect(lightSource) {
-        launch { lightSource.followContactLight() }
-        snapshotFlow { lightSource.emitting }.collect { lightSource.setEmitting(it) }
-    }
+    LaunchedEffect(lightSource) { lightSource.followPressure() }
 
     Spacer(
         Modifier.matchParentSize()
@@ -106,10 +120,12 @@ internal fun BoxScope.GlassKeyFace(
                     vibrancy()
                     blur(2.dp.toPx())
                     // 折射强度随按压力实时变化：按下越深，背景折射越强
-                    val p = motion.pressure
+                    val p = pressure.value
                     lens((18f + 20f * p).dp.toPx(), (30f + 28f * p).dp.toPx())
                 },
-                layerBlock = { applyGlassPress(motion.deformation, direction) },
+                layerBlock = {
+                    applyKeyPress(pressure.value, direction)
+                },
                 onDrawSurface = { drawRect(surfaceColor) }
             )
             .drawWithCache {
@@ -151,7 +167,7 @@ internal fun BoxScope.GlassKeyFace(
                 )
                 val glowAlpha = if (dark) 0.26f else 0.34f
                 onDrawBehind {
-                    val strength = lightSource.glow
+                    val strength = pressure.value
                     val shape = glassShape
                     val outline = if (shape === idleShape) idleOutline else shape.createOutline(size, layoutDirection, this)
                     drawOutline(outline, bevelShade, style = bevel)

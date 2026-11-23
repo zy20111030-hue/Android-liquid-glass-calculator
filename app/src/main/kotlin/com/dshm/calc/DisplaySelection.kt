@@ -6,9 +6,7 @@ import android.content.Context
 import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.LinearOutSlowInEasing
-import androidx.compose.animation.core.tween
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
@@ -50,7 +48,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
@@ -126,14 +123,9 @@ internal fun DisplaySelection(
         val accent = if (darkSurface) Color(0xFF9DCCFF) else Color(0xFF1766AE)
         TextSelectionColors(accent, accent.copy(alpha = 0.36f))
     }
-    val actionsReveal = remember { Animatable(0f) }
-    LaunchedEffect(actionsReveal) { actionsReveal.animateTo(1f, tween(140, easing = LinearOutSlowInEasing)) }
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
         Row(
-            Modifier.graphicsLayer {
-                alpha = actionsReveal.value
-                translationY = (1f - actionsReveal.value) * 4.dp.toPx()
-            }.clip(RoundedCornerShape(16.dp)).background(toolbarColor)
+            Modifier.clip(RoundedCornerShape(16.dp)).background(toolbarColor)
                 .horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp),
             horizontalArrangement = Arrangement.End,
             verticalAlignment = Alignment.CenterVertically
@@ -178,21 +170,14 @@ internal fun DisplaySelection(
 @Composable
 private fun SelectionAction(label: String, color: Color, enabled: Boolean = true, onClick: () -> Unit) {
     val source = remember { MutableInteractionSource() }
-    val motion = rememberGlassPressMotion(source)
     val focused by source.collectIsFocusedAsState()
     val shape = RoundedCornerShape(12.dp)
     Box(
-        Modifier.clickable(enabled = enabled, role = Role.Button, indication = null, interactionSource = source, onClick = onClick)
+        Modifier.clickable(enabled = enabled, role = Role.Button, indication = LocalIndication.current, interactionSource = source, onClick = onClick)
             .sizeIn(minWidth = 48.dp, minHeight = 48.dp),
         contentAlignment = Alignment.Center
     ) {
-        if (motion.active || focused) {
-            Spacer(Modifier.matchParentSize().padding(2.dp).graphicsLayer {
-                applyGlassPress(motion.deformation, glassPressDirection(motion.contact, size.width, size.height))
-                alpha = if (focused) 1f else motion.pressure
-            }.background(color.copy(alpha = 0.12f), shape)
-                .then(if (focused) Modifier.border(1.dp, color, shape) else Modifier))
-        }
+        if (focused) Spacer(Modifier.matchParentSize().padding(2.dp).border(1.dp, color, shape))
         BasicText(
             label, Modifier.padding(horizontal = 10.dp), style = TextStyle(color = if (enabled) color else color.copy(alpha = 0.5f), fontSize = 14.sp),
             maxLines = 1, softWrap = false

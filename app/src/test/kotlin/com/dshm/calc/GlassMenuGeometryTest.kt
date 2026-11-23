@@ -10,6 +10,22 @@ import org.junit.Test
 
 class GlassMenuGeometryTest {
     @Test
+    fun unobstructedLandscapeMenuFollowsTheOriginalLinearMorphInEitherDirection() {
+        for (direction in listOf(LayoutDirection.Ltr, LayoutDirection.Rtl)) {
+            for (step in 0..100) {
+                val p = step / 100f
+                val frame = menuFrame(440f, 245f, 40f, 4f, 52f, p, direction, clearOfToolbar = true)
+                    .translate(Offset(0f, 52f))
+                assertEquals(40f + 400f * p, frame.width, 0.001f)
+                assertEquals(40f + 205f * p, frame.height, 0.001f)
+                assertEquals(4f + 48f * p, frame.top, 0.001f)
+                val endInset = if (direction == LayoutDirection.Ltr) 440f - frame.right else frame.left
+                assertEquals(4f * (1f - p), endInset, 0.001f)
+            }
+        }
+    }
+
+    @Test
     fun openingAndClosingKeepTheLongHistoryPillClearInBothDirections() {
         val face = 40f
         val inset = 4f

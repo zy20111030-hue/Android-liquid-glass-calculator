@@ -21,19 +21,27 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.kyant.backdrop.Backdrop
+import com.kyant.backdrop.backdrops.LayerBackdrop
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.kyant.backdrop.backdrops.rememberCanvasBackdrop
 import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
 
-internal enum class CalculatorOverlay {
+internal sealed interface CalculatorMenuAction : java.io.Serializable {
+    data object ScientificCalculator : CalculatorMenuAction
+}
+
+internal enum class CalculatorOverlay : CalculatorMenuAction {
     MENU, HISTORY, THEME, WALLPAPER, WALLPAPER_PERMISSION, VIBRATION, KEY_SHAPE, LANGUAGE, INTRO, ABOUT
 }
 
-internal val LocalPanelMaterial = staticCompositionLocalOf<PressableGlassMaterial> { error("Missing OverlayPanel material") }
+internal val LocalPanelMaterial = staticCompositionLocalOf<LayerBackdrop> { error("Missing OverlayPanel material") }
 
-internal fun menuItems(str: Str, shapeTitle: String, introTitle: String) = listOf(
+internal fun menuItems(str: Str, shapeTitle: String, introTitle: String, manualScientific: Boolean) = listOf(
+    GlassMenuItem(CalculatorMenuAction.ScientificCalculator, if (manualScientific) str.followOrientation else str.scientificCalculator),
     GlassMenuItem(CalculatorOverlay.THEME, str.darkMode),
     GlassMenuItem(CalculatorOverlay.WALLPAPER, str.wallpaper),
     GlassMenuItem(CalculatorOverlay.VIBRATION, str.vibration),
@@ -50,34 +58,24 @@ internal fun OverlayPanel(
     content: @Composable ColumnScope.() -> Unit
 ) {
     val presentation = LocalPanelPresentation.current
-    val material = rememberPressableGlassMaterial()
+    val material = rememberLayerBackdrop()
     val shape = RoundedCornerShape(24.dp)
     val dimAmount = if (dark) 0.22f else 0.14f
     val dim = rememberCanvasBackdrop { drawRect(Color.Black.copy(alpha = presentation.progress.value * dimAmount)) }
     val scene = rememberCombinedBackdrop(backdrop, dim)
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        val reveal = presentation.progress.value
-        OverlayScrim(reveal * dimAmount, onDismiss)
+        OverlayScrim(presentation.progress.value * dimAmount, onDismiss)
         Box(Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 20.dp, vertical = 12.dp),
             contentAlignment = Alignment.Center) {
             Box(
                 Modifier.widthIn(max = 420.dp).fillMaxWidth()
-                    .graphicsLayer {
-                        translationY = (1f - reveal) * 8.dp.toPx()
-                    }
+                    .offset { IntOffset(0, presentation.offsetY.value.dp.roundToPx()) }
+                    .graphicsLayer { alpha = presentation.progress.value }
                     .pointerInput(Unit) { detectTapGestures { } }
                     .semantics { paneTitle = title; dismiss { onDismiss(); true } }
             ) {
-                Spacer(Modifier.matchParentSize().graphicsLayer {
-                    val rest = 1f - reveal
-                    scaleX = 1f - rest * 0.027f
-                    scaleY = 1f - rest * 0.043f
-                    alpha = reveal
-                }.motionBlur(3.dp * (1f - reveal))
-                    .overlayGlass(scene, shape, dark, exportedBackdrop = material.exportedBackdrop))
-                Column(Modifier.fillMaxWidth().graphicsLayer {
-                    alpha = ((reveal - 0.1f) / 0.9f).coerceIn(0f, 1f)
-                }.padding(vertical = 14.dp, horizontal = 16.dp)) {
+                Spacer(Modifier.matchParentSize().overlayGlass(scene, shape, dark, exportedBackdrop = material))
+                Column(Modifier.fillMaxWidth().padding(vertical = 14.dp, horizontal = 16.dp)) {
                     CompositionLocalProvider(LocalPanelMaterial provides material) { content() }
                 }
             }
@@ -93,7 +91,8 @@ internal fun PanelHeading(text: String, dark: Boolean) {
 
 @Composable
 internal fun PanelButton(text: String, dark: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier,
-    chosen: Boolean? = null, secondary: Boolean = false) {
+    chosen: Boolean? = null, secondary: Boolean = false,
+    feedback: OverlayButtonFeedback = OverlayButtonFeedback.Glass) {
     val shape = RoundedCornerShape(24.dp)
     val material = LocalPanelMaterial.current
     val accent = if (dark) Color(0xFFB8D9FF) else Color(0xFF104981)
@@ -105,7 +104,7 @@ internal fun PanelButton(text: String, dark: Boolean, onClick: () -> Unit, modif
         material = material, dark = dark, shape = shape, onClick = onClick,
         enabled = LocalPanelPresentation.current.interactive,
         modifier = modifier.heightIn(min = 48.dp).then(if (chosen != null) Modifier.semantics { selected = chosen } else Modifier),
-        facePadding = PaddingValues(vertical = 2.dp), fill = fill,
+        facePadding = PaddingValues(vertical = 2.dp), fill = fill, feedback = feedback,
         rim = overlayInk(dark).copy(alpha = if (chosen == true) 0.25f else 0.10f)
     ) {
         BasicText(text, Modifier.padding(horizontal = 16.dp, vertical = 8.dp),

@@ -4,7 +4,9 @@ import androidx.compose.foundation.Image
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -53,12 +55,16 @@ private val scientificRows = listOf(
 @Composable
 internal fun CalculatorKeypad(
     session: ExpressionSession, str: Str, backdrop: Backdrop, buttonSurface: Color, fg: Color, equalsInk: Color,
-    onEquals: () -> Unit, onToggleTheme: () -> Unit, landscape: Boolean, modifier: Modifier = Modifier
+    onEquals: () -> Unit, onToggleTheme: () -> Unit, scientific: Boolean, modifier: Modifier = Modifier,
+    narrowWindow: Boolean = false
 ) {
     BoxWithConstraints(modifier) {
         val density = LocalDensity.current
+        val groupGap = 10.dp
+        val stacked = scientific && narrowWindow && maxWidth < 48.dp * 8 + groupGap
+        val groupHeight = if (stacked) maxOf((maxHeight - groupGap) / 2, 52.dp * scientificRows.size) else maxHeight
         // Cap the actual glyph height as well as sp, including on short windows with enlarged system fonts.
-        val labelLimit = if (landscape) with(density) { ((maxHeight / 6 - 4.dp) * 0.70f).toSp() } else null
+        val labelLimit = if (scientific) with(density) { ((groupHeight / scientificRows.size - 4.dp) * 0.70f).toSp() } else null
         val compactSize = labelLimit?.let { minOf(24f, it.value).coerceAtLeast(1f).sp }
         val key: @Composable (String, Modifier) -> Unit = { symbol, cell ->
             val action: () -> Unit = {
@@ -68,7 +74,7 @@ internal fun CalculatorKeypad(
                     "⌫" -> session.backspace()
                     "=" -> onEquals()
                     "÷" -> {
-                        if (!landscape && session.selection == null && session.editor.inFraction()) session.nextField()
+                        if (!scientific && session.selection == null && session.editor.inFraction()) session.nextField()
                         else session.insertOperator("÷")
                     }
                     "+", "-", "×" -> session.insertOperator(symbol)
@@ -112,8 +118,8 @@ internal fun CalculatorKeypad(
             }
             val hold: (() -> Unit)? = when {
                 symbol == "=" -> onToggleTheme
-                !landscape && symbol == "AC" -> session::insertParentheses
-                !landscape && symbol == "÷" -> session::insertFraction
+                !scientific && symbol == "AC" -> session::insertParentheses
+                !scientific && symbol == "÷" -> session::insertFraction
                 else -> null
             }
             val label = when (symbol) {
@@ -169,20 +175,32 @@ internal fun CalculatorKeypad(
                     "÷" -> str.insertFraction
                     else -> null
                 },
-                symbolLabel = label, compact = landscape, labelSize = textSize, content = content)
+                symbolLabel = label, compact = scientific, labelSize = textSize, content = content)
         }
-        if (landscape) {
-            Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Column(Modifier.weight(1f).fillMaxHeight()) {
-                    scientificRows.forEach { symbols ->
-                        Row(Modifier.fillMaxWidth().weight(1f)) {
-                            symbols.forEach { key(it, Modifier.weight(1f).fillMaxHeight()) }
-                        }
-                    }
-                }
+        when {
+            !scientific -> ArithmeticKeys(Modifier.fillMaxWidth(), false, key)
+            stacked -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(groupGap)) {
+                val group = Modifier.fillMaxWidth().height(groupHeight)
+                ScientificKeys(group, key)
+                ArithmeticKeys(group, true, key)
+            }
+            else -> Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(groupGap)) {
+                ScientificKeys(Modifier.weight(1f).fillMaxHeight(), key)
                 ArithmeticKeys(Modifier.weight(1f).fillMaxHeight(), true, key)
             }
-        } else ArithmeticKeys(Modifier.fillMaxWidth(), false, key)
+        }
+    }
+}
+
+@Composable
+private fun ScientificKeys(modifier: Modifier, key: @Composable (String, Modifier) -> Unit) {
+    Column(modifier) {
+        scientificRows.forEach { symbols ->
+            Row(Modifier.fillMaxWidth().weight(1f)) {
+                symbols.forEach { key(it, Modifier.weight(1f).fillMaxHeight()) }
+            }
+        }
     }
 }
 
@@ -229,36 +247,36 @@ private fun ModeKeyLabel(base: String, current: String, style: TextStyle) {
     }
 }
 
-/** Both orientations use the same arithmetic rows, including the tall equals key. */
+/** Both modes use the same arithmetic rows, including the tall equals key. */
 @Composable
-private fun ArithmeticKeys(modifier: Modifier, landscape: Boolean, key: @Composable (String, Modifier) -> Unit) {
+private fun ArithmeticKeys(modifier: Modifier, scientific: Boolean, key: @Composable (String, Modifier) -> Unit) {
     Column(modifier) {
-        if (landscape) {
+        if (scientific) {
             Row(Modifier.fillMaxWidth().weight(1f)) {
                 memoryKeys.forEach { key(it, Modifier.weight(1f).fillMaxHeight()) }
             }
         }
         basicRows.forEach { symbols ->
-            Row(if (landscape) Modifier.weight(1f) else Modifier) {
+            Row(if (scientific) Modifier.weight(1f) else Modifier) {
                 symbols.forEach { symbol ->
                     val cell = Modifier.weight(1f)
-                    key(symbol, if (landscape) cell.fillMaxHeight() else cell.aspectRatio(1f))
+                    key(symbol, if (scientific) cell.fillMaxHeight() else cell.aspectRatio(1f))
                 }
             }
         }
-        Row(if (landscape) Modifier.weight(2f) else Modifier) {
+        Row(if (scientific) Modifier.weight(2f) else Modifier) {
             Column(Modifier.weight(3f)) {
                 bottomRows.forEach { symbols ->
-                    Row(if (landscape) Modifier.weight(1f) else Modifier) {
+                    Row(if (scientific) Modifier.weight(1f) else Modifier) {
                         symbols.forEach { symbol ->
                             val cell = Modifier.weight(1f)
-                            key(symbol, if (landscape) cell.fillMaxHeight() else cell.aspectRatio(1f))
+                            key(symbol, if (scientific) cell.fillMaxHeight() else cell.aspectRatio(1f))
                         }
                     }
                 }
             }
             val equals = Modifier.weight(1f)
-            key("=", if (landscape) equals.fillMaxHeight() else equals.aspectRatio(0.5f))
+            key("=", if (scientific) equals.fillMaxHeight() else equals.aspectRatio(0.5f))
         }
     }
 }

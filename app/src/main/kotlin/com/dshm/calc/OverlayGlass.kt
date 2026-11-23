@@ -28,6 +28,7 @@ import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
+import com.kyant.backdrop.shadow.Shadow
 
 internal fun overlaySurface(dark: Boolean) =
     if (dark) Color(0xFF171D28).copy(alpha = 0.62f) else Color(0xFFF8FAFF).copy(alpha = 0.75f)
@@ -48,9 +49,9 @@ internal fun BoxScope.OverlayScrim(alpha: Float, onDismiss: () -> Unit) {
 internal fun Modifier.overlayGlass(
     backdrop: Backdrop, shape: Shape, dark: Boolean,
     blurRadius: Dp = 5.dp, refractionHeight: Dp = 12.dp, refractionAmount: Dp = 17.dp,
-    exportedBackdrop: LayerBackdrop? = null
+    exportedBackdrop: LayerBackdrop? = null, shadow: Shadow = Shadow.Default
 ): Modifier = drawBackdrop(
-    backdrop = backdrop, shape = { shape }, highlight = null, exportedBackdrop = exportedBackdrop,
+    backdrop = backdrop, shape = { shape }, highlight = null, shadow = { shadow }, exportedBackdrop = exportedBackdrop,
     effects = { vibrancy(); blur(blurRadius.toPx()); lens(refractionHeight.toPx(), refractionAmount.toPx()) },
     onDrawSurface = { drawRect(overlaySurface(dark)) }
 ).clip(shape).drawWithCache {

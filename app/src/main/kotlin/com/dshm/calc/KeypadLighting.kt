@@ -5,15 +5,14 @@ import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.State
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.MotionDurationScale
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -29,7 +28,6 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toSize
-import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.collectLatest
 import kotlin.math.min
 
@@ -41,12 +39,15 @@ internal class KeypadLights {
     val emitters = mutableStateListOf<KeyLightSource>()
 }
 
-internal class KeyLightSource(private val keypad: KeypadLights, val motion: GlassPressMotion) {
-    val localContact get() = motion.contact
+private val PressIn = tween<Float>(72, easing = LinearOutSlowInEasing)
+private val QuickTap = tween<Float>(32, easing = LinearOutSlowInEasing)
+private val Release = tween<Float>(150)
+
+internal class KeyLightSource(private val keypad: KeypadLights) {
+    val pressure = Animatable(0f)
+    var localContact by mutableStateOf(Offset.Unspecified)
+        private set
     private var pointerDown by mutableStateOf(false)
-    private val heldGlow = Animatable(0f)
-    val glow get() = maxOf(motion.pressure, heldGlow.value)
-    val emitting get() = pointerDown || motion.active || heldGlow.value > 0f
     var size by mutableStateOf(IntSize.Zero)
         private set
     var bounds by mutableStateOf(Rect.Zero)
@@ -59,40 +60,32 @@ internal class KeyLightSource(private val keypad: KeypadLights, val motion: Glas
     }
 
     fun movePointer(position: Offset) {
-        val point = Offset(
+        localContact = Offset(
             position.x.coerceIn(0f, size.width.toFloat()),
             position.y.coerceIn(0f, size.height.toFloat())
         )
-        motion.move(point)
     }
 
-    fun beginPointer(position: Offset) {
-        movePointer(position)
+    fun beginPress(position: Offset) {
+        localContact = position
         pointerDown = true
-    }
-
-    fun endPointer() { pointerDown = false }
-
-    suspend fun followContactLight() {
-        snapshotFlow { pointerDown }.collectLatest { down ->
-            // Physical light survives a drag outside the key. It never manufactures a tap impulse.
-            val target = if (down) 0.92f else 0f
-            if (target == heldGlow.value) return@collectLatest
-            if (currentCoroutineContext()[MotionDurationScale]?.scaleFactor == 0f) heldGlow.snapTo(target)
-            else heldGlow.animateTo(target, tween(if (down) 82 else 105, easing = LinearOutSlowInEasing))
-        }
-    }
-
-    fun setEmitting(active: Boolean) {
-        if (active) {
-            if (this !in keypad.emitters) keypad.emitters.add(this)
-        } else keypad.emitters.remove(this)
+        if (this !in keypad.emitters) keypad.emitters.add(this)
     }
 
     fun finishPress() {
-        endPointer()
-        motion.cancel()
-        setEmitting(false)
+        pointerDown = false
+        keypad.emitters.remove(this)
+    }
+
+    suspend fun followPressure() {
+        snapshotFlow { pointerDown }.collectLatest { down ->
+            if (down) {
+                pressure.animateTo(1f, PressIn)
+            } else if (pressure.value > 0.01f) {
+                if (pressure.value < 0.52f) pressure.animateTo(0.52f, QuickTap)
+                pressure.animateTo(0f, Release)
+            }
+        }
     }
 }
 
@@ -101,7 +94,7 @@ internal fun Modifier.trackKeyContact(key: KeyLightSource): Modifier =
     onGloballyPositioned(key::place).pointerInput(key) {
         awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-            key.beginPointer(down.position)
+            key.beginPress(down.position)
             try {
                 do {
                     val event = awaitPointerEvent(PointerEventPass.Initial)
@@ -110,7 +103,7 @@ internal fun Modifier.trackKeyContact(key: KeyLightSource): Modifier =
                     key.movePointer(change.position)
                 } while (true)
             } finally {
-                key.endPointer()
+                key.finishPress()
             }
         }
     }
@@ -154,11 +147,11 @@ internal fun Modifier.drawNeighborReflections(keypad: KeypadLights, dark: Boolea
     }
     onDrawBehind {
         for (light in lights) {
-            val strength = light.source.glow
+            val strength = light.source.pressure.value
             if (strength <= 0f) continue
             for (neighbor in light.neighbors) {
                 // Cross-fade onto a neighboring key as its own bent edge settles back into place.
-                val settled = (1f - neighbor.motion.pressure * 2.5f).coerceIn(0f, 1f)
+                val settled = (1f - neighbor.pressure.value * 2.5f).coerceIn(0f, 1f)
                 val intensity = strength * settled
                 if (intensity == 0f) continue
                 val rect = neighbor.bounds

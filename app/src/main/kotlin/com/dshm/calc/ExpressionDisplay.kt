@@ -1,10 +1,6 @@
 package com.dshm.calc
 
 import android.os.SystemClock
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.LinearOutSlowInEasing
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.ScrollableState
@@ -27,7 +23,6 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.drawscope.translate
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -63,9 +58,7 @@ internal fun ExpressionDisplay(
     val contentRevision = session.contentRevision
     val document = session.selection
     val length = remember(editor, contentRevision) { editor.textLen() }
-    val targetSize = when { length > 10 -> 40f; length > 7 -> 48f; else -> 62f }
-    val editingSize by animateFloatAsState(targetSize, tween(125, easing = LinearOutSlowInEasing), label = "Formula type size")
-    val size = if (document == null && length <= FORMULA_RUN_LENGTH) editingSize.sp else targetSize.sp
+    val size = when { length > 10 -> 40.sp; length > 7 -> 48.sp; else -> 62.sp }
     val shadow = with(density) {
         Shadow(if (lightText) Color(0x99070D19) else Color(0x90FFFFFF), Offset(0f, 0.8.dp.toPx()), 1.8.dp.toPx())
     }
@@ -75,14 +68,6 @@ internal fun ExpressionDisplay(
     val scroll = rememberSaveable { mutableFloatStateOf(0f) }
     val phase = session.phase
     val source = session.completedExpression.takeIf { phase == ExpressionPhase.Result && document == null }
-    val arrival = remember { Animatable(if (phase == ExpressionPhase.Result) 1f else 0f) }
-    LaunchedEffect(phase, active) {
-        when {
-            phase != ExpressionPhase.Result -> arrival.snapTo(0f)
-            !active -> arrival.snapTo(1f)
-            else -> arrival.animateTo(1f, tween(175, easing = LinearOutSlowInEasing))
-        }
-    }
     val showCaret = active && LocalWindowInfo.current.isWindowFocused
     val blinkEnabled = showCaret && rememberCoroutineScope().coroutineContext[MotionDurationScale]?.scaleFactor != 0f
 
@@ -136,10 +121,7 @@ internal fun ExpressionDisplay(
             if (caption != null && source != null) {
                 val captionScroll = rememberSaveable { mutableFloatStateOf(0f) }
                 val plain = remember(source) { SelectableExpression(source).text }
-                FormulaLine(caption, viewport, captionScroll, ink.copy(alpha = 0.90f), Modifier.graphicsLayer {
-                    alpha = arrival.value
-                    translationY = (1f - arrival.value) * 4.dp.toPx()
-                }.semantics {
+                FormulaLine(caption, viewport, captionScroll, ink.copy(alpha = 0.90f), Modifier.semantics {
                     contentDescription = plain
                     onLongClick(labels.selectValue) { session.selectCompleted(null); true }
                 }.pointerInput(source, caption) {
@@ -165,11 +147,7 @@ internal fun ExpressionDisplay(
             } else {
                 val expression = remember(editor, contentRevision) { exprText(editor.root) }
                 val liveLayout by rememberUpdatedState(layout)
-                val resultMotion = if (phase == ExpressionPhase.Result) Modifier.graphicsLayer {
-                    translationY = (1f - arrival.value) * 4.dp.toPx()
-                    alpha = 0.76f + 0.24f * arrival.value
-                } else Modifier
-                FormulaLine(layout, viewport, scroll, ink, resultMotion.semantics {
+                FormulaLine(layout, viewport, scroll, ink, Modifier.semantics {
                     contentDescription = expression
                     onLongClick(labels.selectValue) { session.select(); true }
                 }.pointerInput(session, revision, gestureConfig) {
